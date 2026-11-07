@@ -23,3 +23,7 @@ __pycache__/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Laufzeitdaten (Ordner bleibt im Repo)
+data/*
+!data/.gitkeep
