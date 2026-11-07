@@ -1,0 +1,25 @@
+# Secrets und Zugangsdaten
+.env
+.env.*
+!.env.example
+credentials.json
+token.json
+
+# Lokale Daten
+*.sqlite
+*.sqlite3
+*.db
+data/checkpoints/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
