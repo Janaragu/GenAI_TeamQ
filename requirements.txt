@@ -36,3 +36,6 @@ langchain-cerebras==0.8.2
 google-api-python-client==2.201.0
 google-auth-oauthlib==1.5.0
 google-auth-httplib2==0.4.4
+
+# Zeitzonen unter Windows (für zoneinfo)
+tzdata==2026.6
