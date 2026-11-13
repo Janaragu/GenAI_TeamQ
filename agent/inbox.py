@@ -1,4 +1,7 @@
-"""Holt neue Mails und ordnet sie automatisch zu."""
+"""Holt neue Mails und lässt sie vom Agenten automatisch einsortieren.
+
+Die Oberfläche ruft sync() beim Öffnen und danach jede Minute auf.
+"""
 
 import json
 import os
@@ -12,21 +15,25 @@ from agent.graph import run_agent
 from agent.tools import call_tool
 from schemas import Email
 
-MAX_WORKERS = 4
-_lock = threading.Lock()
+MAX_WORKERS = 4         # so viele Mails werden gleichzeitig analysiert
+_lock = threading.Lock()  # verhindert, dass zwei Abrufe gleichzeitig laufen
 
 
 @dataclass
 class SyncResult:
-    new: int = 0
-    failed: int = 0
-    busy: bool = False
+    new: int = 0       # erfolgreich verarbeitete neue Mails
+    failed: int = 0    # Mails mit Fehler
+    busy: bool = False  # True, wenn schon ein Abruf lief
 
 
 def source_name(use_testset: bool) -> str:
     return "test" if use_testset else "gmail"
 
 
+# -----------------------------------------------------------------------------
+# 1. Neue Mails finden: nur solche, die noch nicht in der Datenbank sind.
+#    Testmodus: aus eval/data/testmails.json. Sonst: neueste Mails aus Gmail.
+# -----------------------------------------------------------------------------
 def _fetch_new(use_testset: bool, limit: int) -> list[Email]:
     known = store.known_ids(source_name(use_testset))
     if use_testset:
@@ -43,6 +50,9 @@ def _fetch_new(use_testset: bool, limit: int) -> list[Email]:
     return [Email.model_validate(item) for item in raw]
 
 
+# -----------------------------------------------------------------------------
+# 2. Eine Mail verarbeiten. Fehler stoppen nicht den ganzen Abruf.
+# -----------------------------------------------------------------------------
 def _process(email: Email, use_testset: bool) -> bool:
     source = source_name(use_testset)
     try:
@@ -56,8 +66,10 @@ def _process(email: Email, use_testset: bool) -> bool:
         return False
 
 
+# -----------------------------------------------------------------------------
+# 3. Abruf: neue Mails holen und parallel verarbeiten.
+# -----------------------------------------------------------------------------
 def sync(use_testset: bool, limit: int = 25) -> SyncResult:
-    """Verarbeitet alle neuen Mails. Läuft schon ein Abruf, passiert nichts."""
     if not _lock.acquire(blocking=False):
         return SyncResult(busy=True)
     try:

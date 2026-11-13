@@ -2,6 +2,9 @@
 
     python -m eval.metrics            # beide Systeme
     python -m eval.metrics --only-a   # nur Regeln, ohne LLM-Aufrufe
+
+Das Testset (eval/data/testmails.json) enthält Mails mit der richtigen
+Kategorie ("expected_category"). Gemessen wird, wie oft die Systeme richtig liegen.
 """
 
 import argparse
@@ -24,6 +27,13 @@ def load_testset() -> list[dict]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+# -----------------------------------------------------------------------------
+# 1. Kennzahlen berechnen
+#    Accuracy  = Anteil richtiger Antworten
+#    Precision = von allen als X erkannten, wie viele waren wirklich X
+#    Recall    = von allen echten X, wie viele wurden gefunden
+#    F1        = Mittel aus Precision und Recall, Macro-F1 = Schnitt über Kategorien
+# -----------------------------------------------------------------------------
 def scores(expected: list[Category], predicted: list[Category]) -> dict:
     accuracy = sum(e == p for e, p in zip(expected, predicted)) / len(expected)
     per_class = {}
@@ -39,6 +49,9 @@ def scores(expected: list[Category], predicted: list[Category]) -> dict:
     return {"accuracy": accuracy, "macro_f1": macro_f1, "per_class": per_class}
 
 
+# -----------------------------------------------------------------------------
+# 2. Ein System auswerten und Ergebnis samt Fehlern ausgeben
+# -----------------------------------------------------------------------------
 def evaluate(name: str, items: list[dict], predict: Callable[[Email], Category | None]) -> None:
     emails = [Email.model_validate(item["email"]) for item in items]
     expected = [Category(item["expected_category"]) for item in items]
@@ -55,6 +68,9 @@ def evaluate(name: str, items: list[dict], predict: Callable[[Email], Category |
             print(f"  FEHLER {email.id}: erwartet {e.value}, erhalten {got} ({email.subject})")
 
 
+# -----------------------------------------------------------------------------
+# 3. System B: alle Mails parallel vom LLM analysieren lassen
+# -----------------------------------------------------------------------------
 def evaluate_llm(items: list[dict]) -> None:
     from agent.graph import analyze_email
 
@@ -83,6 +99,9 @@ def evaluate_llm(items: list[dict]) -> None:
     print(f"Termin erkannt ja/nein korrekt: {hits}/{len(items)}")
 
 
+# -----------------------------------------------------------------------------
+# 4. Start über die Kommandozeile
+# -----------------------------------------------------------------------------
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--only-a", action="store_true", help="nur System A, ohne LLM")

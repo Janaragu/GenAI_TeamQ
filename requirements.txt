@@ -39,3 +39,7 @@ google-auth-httplib2==0.4.4
 
 # Zeitzonen unter Windows (für zoneinfo)
 tzdata==2026.6
+
+# Oberfläche (Webserver)
+fastapi==0.162.1
+uvicorn==0.54.0

@@ -1,4 +1,14 @@
-"""LangGraph-Agent: analysieren, labeln, Termin bestätigen lassen, eintragen."""
+"""Der eigentliche Agent als LangGraph-Graph.
+
+Ablauf pro Mail:
+
+    analyze -> apply_label -> (hat Termin?) -> confirm_event -> (Ja?) -> create_event
+                                   | nein                          | nein
+                                  ENDE                            ENDE
+
+Bei confirm_event hält der Graph an (interrupt) und wartet auf die Entscheidung
+des Nutzers in der Oberfläche. Erst danach wird weitergemacht.
+"""
 
 import os
 import sqlite3
@@ -20,11 +30,14 @@ from schemas import AgentResult, AgentStatus, Category, Email, EmailAnalysis
 
 load_dotenv()
 
-MAX_BODY_CHARS = 6000
+MAX_BODY_CHARS = 6000  # lange Mails werden gekürzt, damit der Prompt klein bleibt
 
 
+# -----------------------------------------------------------------------------
+# 1. Analyse: Mail ans LLM schicken, strukturierte Antwort (EmailAnalysis) holen.
+#    Keine Nebenwirkungen, deshalb nutzt auch die Evaluation diese Funktion.
+# -----------------------------------------------------------------------------
 def analyze_email(email: Email) -> EmailAnalysis:
-    """Reine Analyse ohne Nebenwirkungen. Wird auch von der Evaluation benutzt."""
     llm = get_llm().with_structured_output(EmailAnalysis)
     user = USER_TEMPLATE.format(
         received_at=email.received_at.isoformat() if email.received_at else "unbekannt",
@@ -33,16 +46,20 @@ def analyze_email(email: Email) -> EmailAnalysis:
         body=email.body[:MAX_BODY_CHARS],
     )
     analysis = llm.invoke([("system", SYSTEM_PROMPT), ("user", user)])
+
     if analysis.category is not Category.TERMIN:
         analysis.event = None
     elif analysis.event:
-        # Uhrzeiten aus Mails sind Ortszeit. Das Modell hängt trotzdem oft "Z" an.
+        # Uhrzeiten aus Mails sind Ortszeit. Das Modell hängt trotzdem oft "Z" (UTC) an.
         event = analysis.event
         event.start = event.start.replace(tzinfo=None)
         event.end = event.end.replace(tzinfo=None) if event.end else None
     return analysis
 
 
+# -----------------------------------------------------------------------------
+# 2. Protokoll-Helfer: Jeder Schritt schreibt einen Eintrag ins Protokoll.
+# -----------------------------------------------------------------------------
 def _source(dry_run: bool | None) -> str:
     return "test" if dry_run else "gmail"
 
@@ -52,6 +69,10 @@ def _log(state: AgentState, action: str, details: str, actor: str = "agent") -> 
     store.log(action, email["id"], email["subject"], details, _source(state.get("dry_run")), actor)
 
 
+# -----------------------------------------------------------------------------
+# 3. Die Knoten (Schritte) des Graphen. Jeder bekommt den State und gibt nur
+#    die Felder zurück, die er ändert.
+# -----------------------------------------------------------------------------
 def _analyze(state: AgentState) -> AgentState:
     analysis = analyze_email(Email.model_validate(state["email"]))
     _log(state, "analysiert", f"Kategorie {analysis.category.value}, Modell {get_llm().model_name}")
@@ -59,6 +80,7 @@ def _analyze(state: AgentState) -> AgentState:
 
 
 def _apply_label(state: AgentState) -> AgentState:
+    # Gmail-Label setzen (im Testlauf nur so tun als ob)
     label = Category(state["analysis"]["category"]).label
     if not state.get("dry_run"):
         call_tool("apply_label", {"message_id": state["email"]["id"], "label_name": label})
@@ -70,10 +92,12 @@ def _apply_label(state: AgentState) -> AgentState:
 
 
 def _after_label(state: AgentState) -> str:
+    # Weiche: Nur Mails mit Termin gehen weiter zur Bestätigung.
     return "confirm_event" if state["analysis"].get("event") else END
 
 
 def _confirm_event(state: AgentState) -> AgentState:
+    # Hier hält der Graph an. Die Oberfläche setzt später mit Ja/Nein fort.
     # Beim Fortsetzen läuft der Knoten neu an, deshalb steht vor interrupt() nichts.
     approved = interrupt({"event": state["analysis"]["event"]})
     action = "termin_bestaetigt" if approved else "termin_verworfen"
@@ -82,6 +106,7 @@ def _confirm_event(state: AgentState) -> AgentState:
 
 
 def _after_confirm(state: AgentState) -> str:
+    # Weiche: Nur bei Ja wird der Termin eingetragen.
     return "create_event" if state.get("event_approved") else END
 
 
@@ -89,6 +114,7 @@ def _create_event(state: AgentState) -> AgentState:
     if state.get("dry_run"):
         _log(state, "termin_eingetragen", "Testlauf, nichts in den Kalender geschrieben")
         return {"event_link": "(Testlauf, nichts eingetragen)"}
+    # Ohne Ende in der Mail nehmen wir eine Stunde an.
     event = state["analysis"]["event"]
     start = datetime.fromisoformat(event["start"])
     end = datetime.fromisoformat(event["end"]) if event.get("end") else start + timedelta(hours=1)
@@ -106,6 +132,10 @@ def _create_event(state: AgentState) -> AgentState:
     return {"event_link": created.get("link")}
 
 
+# -----------------------------------------------------------------------------
+# 4. Graph zusammenbauen: Knoten und Pfeile verbinden, Speicher (SQLite) anhängen.
+#    lru_cache sorgt dafür, dass der Graph nur einmal gebaut wird.
+# -----------------------------------------------------------------------------
 @lru_cache(maxsize=1)
 def get_graph():
     builder = StateGraph(AgentState)
@@ -125,12 +155,18 @@ def get_graph():
     return builder.compile(checkpointer=SqliteSaver(connection))
 
 
+# -----------------------------------------------------------------------------
+# 5. Öffentliche Funktionen, die der Rest des Projekts benutzt.
+#    Jede Mail hat ihren eigenen "Thread" (Verlauf) im Speicher, Testmails
+#    bekommen das Präfix "dry-".
+# -----------------------------------------------------------------------------
 def _config(email_id: str, dry_run: bool) -> dict:
     prefix = "dry-" if dry_run else ""
     return {"configurable": {"thread_id": f"{prefix}{email_id}"}}
 
 
 def _result(config: dict) -> AgentResult:
+    # Liest den gespeicherten Zustand und macht daraus ein AgentResult.
     snapshot = get_graph().get_state(config)
     values = snapshot.values
     return AgentResult(
@@ -166,7 +202,7 @@ def run_agent(email: Email, dry_run: bool = False) -> AgentResult:
 
 
 def resume_agent(email_id: str, approved: bool, dry_run: bool = False) -> AgentResult:
-    """Setzt nach der Entscheidung über einen Terminvorschlag fort."""
+    """Setzt nach der Ja/Nein-Entscheidung zu einem Terminvorschlag fort."""
     config = _config(email_id, dry_run)
     try:
         get_graph().invoke(Command(resume=approved), config)

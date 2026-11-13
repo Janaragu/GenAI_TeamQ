@@ -1,0 +1,127 @@
+<!doctype html>
+<!--
+  Gerüst der Oberfläche. Aufgebaut wie Gmail:
+  oben die Leiste mit Suche, links die Ordner, in der Mitte Liste oder Mail,
+  rechts die Kalender-Leiste. Den Inhalt füllt app.js.
+-->
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LocalMail AI</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%230b57d0' d='M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm8 7 8-5H4l8 5z'/%3E%3C/svg%3E">
+  <!-- Schrift und Symbole (Material Symbols) von Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0..1,0&display=block">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <!-- ===== Obere Leiste: Menü, Logo, Suche, Einstellungen ===== -->
+  <header class="topbar">
+    <button class="icon-btn" id="menu-btn" title="Hauptmenü" aria-label="Hauptmenü">
+      <span class="ms">menu</span>
+    </button>
+    <div class="brand">
+      <span class="ms brand-icon">mail</span>
+      <span class="brand-name">LocalMail</span>
+    </div>
+    <form class="search" id="search-form" role="search">
+      <button class="icon-btn" type="submit" title="Suchen" aria-label="Suchen"><span class="ms">search</span></button>
+      <input id="search-input" type="search" placeholder="In E-Mails suchen" autocomplete="off">
+      <button class="icon-btn" type="button" id="search-clear" title="Suche löschen" aria-label="Suche löschen" hidden>
+        <span class="ms">close</span>
+      </button>
+    </form>
+    <div class="top-actions">
+      <span class="mode-badge" id="mode-badge" hidden>Testmodus</span>
+      <button class="icon-btn" id="settings-btn" title="Einstellungen" aria-label="Einstellungen">
+        <span class="ms">settings</span>
+      </button>
+      <div class="menu" id="settings-menu" hidden>
+        <label class="switch-row">
+          <input type="checkbox" id="testset-toggle">
+          <span>Testmails statt Gmail</span>
+        </label>
+        <p class="hint" id="settings-hint"></p>
+      </div>
+    </div>
+  </header>
+
+  <div class="layout">
+
+    <!-- ===== Linke Seitenleiste: Abrufen-Knopf, Ordner, Labels ===== -->
+    <nav class="sidebar" id="sidebar">
+      <button class="compose" id="sync-btn" title="Neue Mails abrufen">
+        <span class="ms">sync</span><span class="compose-text">Abrufen</span>
+      </button>
+      <ul class="nav-list" id="nav-main"></ul>
+      <div class="nav-heading">Labels</div>
+      <ul class="nav-list" id="nav-labels"></ul>
+      <p class="sync-status" id="sync-status"></p>
+    </nav>
+
+    <!-- ===== Mitte: Mail-Liste, geöffnete Mail oder Protokoll ===== -->
+    <main class="content">
+
+      <section class="pane" id="list-view">
+        <div class="toolbar">
+          <button class="icon-btn" id="refresh-btn" title="Aktualisieren" aria-label="Aktualisieren">
+            <span class="ms">refresh</span>
+          </button>
+          <span class="range" id="list-range"></span>
+        </div>
+        <div class="mail-list" id="mail-list"></div>
+      </section>
+
+      <section class="pane" id="mail-view" hidden>
+        <div class="toolbar">
+          <button class="icon-btn" id="back-btn" title="Zurück" aria-label="Zurück">
+            <span class="ms">arrow_back</span>
+          </button>
+        </div>
+        <article class="mail" id="mail-article"></article>
+      </section>
+
+      <section class="pane" id="log-view" hidden>
+        <div class="toolbar">
+          <span class="toolbar-title">Protokoll</span>
+          <a class="text-btn" href="/api/log/export" download="protokoll.md">
+            <span class="ms">download</span>Als Markdown herunterladen
+          </a>
+        </div>
+        <div class="log-wrap">
+          <table class="log-table">
+            <thead><tr><th>Zeit</th><th>Quelle</th><th>Wer</th><th>Aktion</th><th>Betreff</th><th>Details</th></tr></thead>
+            <tbody id="log-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <!-- ===== Rechts: Kalender-Seitenleiste (wie in Gmail) ===== -->
+    <aside class="calendar-panel" id="calendar-panel" hidden>
+      <div class="panel-head">
+        <span>Kalender</span>
+        <button class="icon-btn" id="calendar-close" title="Schliessen" aria-label="Kalender schliessen">
+          <span class="ms">close</span>
+        </button>
+      </div>
+      <p class="panel-sub" id="calendar-sub"></p>
+      <div id="calendar-list"></div>
+    </aside>
+    <div class="side-strip">
+      <button class="strip-btn" id="calendar-btn" title="Kalender" aria-label="Kalender öffnen">
+        <span class="ms">calendar_month</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Kurze Meldungen unten links -->
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
