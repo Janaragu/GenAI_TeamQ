@@ -1,4 +1,8 @@
-"""Gemeinsame Pydantic-Schemas: die Schnittstelle zwischen Agent, MCP-Server, UI und Evaluation."""
+"""Gemeinsame Datenmodelle (Pydantic) für das ganze Projekt.
+
+Alle Teile (Agent, MCP-Server, Oberfläche, Evaluation) tauschen Daten in diesen
+Formen aus. Ändert ihr hier etwas, betrifft das alle anderen Teile.
+"""
 
 from datetime import datetime
 from enum import Enum
@@ -6,6 +10,10 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 
+# -----------------------------------------------------------------------------
+# Kategorien: In genau eine davon sortiert der Agent jede Mail ein.
+# Jede Kategorie hat ein passendes Gmail-Label, z. B. "LocalMail/Termin".
+# -----------------------------------------------------------------------------
 class Category(str, Enum):
     TERMIN = "termin"          # enthält einen konkreten Termin
     AUFGABE = "aufgabe"        # verlangt eine Handlung oder Antwort
@@ -15,10 +23,13 @@ class Category(str, Enum):
 
     @property
     def label(self) -> str:
-        """Gmail-Label, das zu dieser Kategorie gehört."""
+        """Name des Gmail-Labels zu dieser Kategorie."""
         return f"LocalMail/{self.value.capitalize()}"
 
 
+# -----------------------------------------------------------------------------
+# Eine Mail, so wie sie aus Gmail (oder aus dem Testset) kommt.
+# -----------------------------------------------------------------------------
 class Email(BaseModel):
     id: str
     thread_id: str = ""
@@ -28,6 +39,10 @@ class Email(BaseModel):
     received_at: datetime | None = None
 
 
+# -----------------------------------------------------------------------------
+# Was das LLM zurückgibt. Die Beschreibungen (description) liest das LLM mit,
+# sie sind also Teil des Prompts.
+# -----------------------------------------------------------------------------
 class EventProposal(BaseModel):
     title: str = Field(description="Kurzer Titel des Termins")
     start: datetime = Field(description="Beginn als ISO-8601, Ortszeit, ohne Zeitzone")
@@ -46,9 +61,12 @@ class EmailAnalysis(BaseModel):
     )
 
 
+# -----------------------------------------------------------------------------
+# Ergebnis eines Agenten-Laufs für eine Mail. Die Oberfläche zeigt das an.
+# -----------------------------------------------------------------------------
 class AgentStatus(str, Enum):
-    DONE = "done"
-    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    DONE = "done"                                    # fertig verarbeitet
+    AWAITING_CONFIRMATION = "awaiting_confirmation"  # Termin wartet auf Ja/Nein
 
 
 class AgentResult(BaseModel):

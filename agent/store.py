@@ -1,4 +1,9 @@
-"""Dauerhafte Ablage in SQLite: verarbeitete Mails und Protokoll aller Aktionen."""
+"""Dauerhafte Ablage in SQLite (Datei aus SQLITE_PATH, Standard data/localmail.sqlite).
+
+Zwei Tabellen:
+  emails        jede verarbeitete Mail mit Kategorie, Zusammenfassung und Termin
+  activity_log  das Protokoll: wer (Agent oder Nutzer) wann was gemacht hat
+"""
 
 import json
 import os
@@ -15,13 +20,16 @@ from schemas import AgentResult, Email
 
 load_dotenv()
 
-STATUS_FAILED = "failed"
-INBOX = "inbox"
+STATUS_FAILED = "failed"  # Mail konnte nicht analysiert werden
+INBOX = "inbox"           # Posteingang = alles ausser Spam
 
+# -----------------------------------------------------------------------------
+# 1. Tabellen anlegen (nur beim ersten Mal) und Verbindung öffnen.
+# -----------------------------------------------------------------------------
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS emails (
     id TEXT PRIMARY KEY,
-    source TEXT NOT NULL,
+    source TEXT NOT NULL,          -- 'gmail' oder 'test'
     thread_id TEXT,
     sender TEXT,
     subject TEXT,
@@ -30,16 +38,17 @@ CREATE TABLE IF NOT EXISTS emails (
     category TEXT,
     summary TEXT,
     label TEXT,
-    status TEXT NOT NULL,
-    event_json TEXT,
-    event_link TEXT,
-    processed_at TEXT NOT NULL
+    status TEXT NOT NULL,          -- 'done', 'awaiting_confirmation' oder 'failed'
+    event_json TEXT,               -- Terminvorschlag als JSON
+    event_link TEXT,               -- Link zum Kalendereintrag
+    processed_at TEXT NOT NULL,
+    seen INTEGER NOT NULL DEFAULT 0  -- 1 = in der Oberfläche geöffnet
 );
 CREATE TABLE IF NOT EXISTS activity_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp TEXT NOT NULL,
     source TEXT NOT NULL,
-    actor TEXT NOT NULL,
+    actor TEXT NOT NULL,           -- 'agent' oder 'nutzer'
     action TEXT NOT NULL,
     email_id TEXT,
     subject TEXT,
@@ -61,12 +70,19 @@ def _db():
     connection.row_factory = sqlite3.Row
     try:
         connection.executescript(_SCHEMA)
-        with connection:
+        # Ältere Datenbanken haben die Spalte "seen" noch nicht: nachrüsten.
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(emails)")}
+        if "seen" not in columns:
+            connection.execute("ALTER TABLE emails ADD COLUMN seen INTEGER NOT NULL DEFAULT 0")
+        with connection:  # Änderungen werden am Ende automatisch gespeichert (commit)
             yield connection
     finally:
         connection.close()
 
 
+# -----------------------------------------------------------------------------
+# 2. Protokoll schreiben
+# -----------------------------------------------------------------------------
 def log(
     action: str,
     email_id: str | None = None,
@@ -83,6 +99,9 @@ def log(
         )
 
 
+# -----------------------------------------------------------------------------
+# 3. Mails speichern und aktualisieren
+# -----------------------------------------------------------------------------
 def save_result(email: Email, result: AgentResult, source: str) -> None:
     event = result.analysis.event
     with _db() as db:
@@ -138,6 +157,14 @@ def update_after_decision(result: AgentResult) -> None:
         )
 
 
+def mark_seen(email_id: str) -> None:
+    with _db() as db:
+        db.execute("UPDATE emails SET seen = 1 WHERE id = ?", (email_id,))
+
+
+# -----------------------------------------------------------------------------
+# 4. Mails lesen (für die Oberfläche)
+# -----------------------------------------------------------------------------
 def known_ids(source: str) -> set[str]:
     with _db() as db:
         rows = db.execute("SELECT id FROM emails WHERE source = ?", (source,)).fetchall()
@@ -145,6 +172,7 @@ def known_ids(source: str) -> set[str]:
 
 
 def _mailbox_filter(mailbox: str) -> tuple[str, list[str]]:
+    # Übersetzt den Ordnernamen in eine SQL-Bedingung.
     if mailbox == INBOX:
         return "(category IS NULL OR category != 'spam')", []
     if mailbox == STATUS_FAILED:
@@ -176,10 +204,11 @@ def get_email(email_id: str) -> dict | None:
     return _to_dict(row) if row else None
 
 
-def mailbox_counts(source: str) -> dict[str, int]:
+def unread_counts(source: str) -> dict[str, int]:
+    """Anzahl ungelesener Mails pro Ordner (wie die Zahlen in der Gmail-Seitenleiste)."""
     with _db() as db:
         rows = db.execute(
-            "SELECT category, status FROM emails WHERE source = ?", (source,)
+            "SELECT category, status FROM emails WHERE source = ? AND seen = 0", (source,)
         ).fetchall()
     counts = Counter(row["category"] for row in rows if row["category"])
     counts[STATUS_FAILED] = sum(row["status"] == STATUS_FAILED for row in rows)
@@ -187,6 +216,20 @@ def mailbox_counts(source: str) -> dict[str, int]:
     return dict(counts)
 
 
+def confirmed_test_events() -> list[dict]:
+    """Im Testmodus bestätigte Termine (die nicht wirklich im Kalender stehen)."""
+    with _db() as db:
+        rows = db.execute(
+            "SELECT event_json FROM emails WHERE source = 'test'"
+            " AND event_json IS NOT NULL AND event_link IS NOT NULL"
+        ).fetchall()
+    events = [json.loads(row["event_json"]) for row in rows]
+    return sorted(events, key=lambda event: event["start"])
+
+
+# -----------------------------------------------------------------------------
+# 5. Protokoll lesen und als Markdown exportieren (für eure Dokumentation)
+# -----------------------------------------------------------------------------
 def list_log(limit: int = 500) -> list[dict]:
     with _db() as db:
         rows = db.execute("SELECT * FROM activity_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
@@ -198,7 +241,6 @@ def _cell(value: str | None) -> str:
 
 
 def export_markdown(path: str = "data/protokoll.md") -> str:
-    """Schreibt das gesamte Protokoll als Markdown-Datei für die Dokumentation."""
     entries = list(reversed(list_log(limit=100_000)))
     with _db() as db:
         categories = db.execute(

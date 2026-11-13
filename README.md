@@ -9,7 +9,7 @@ und Termine nach Bestätigung in Google Calendar einträgt.
 | --- | --- | --- |
 | `agent/` | LangGraph-Graph, State, Prompts, `run_agent()` | Agent & LLM |
 | `mcp_server/` | MCP-Server mit Gmail- und Kalender-Werkzeugen | API & MCP |
-| `app/` | Dashboard (Gradio/Streamlit) | UI |
+| `app/` | Postfach-Oberfläche im Gmail-Stil: FastAPI-Server (`main.py`) und Seite in `static/` | UI |
 | `eval/` | System A (Regeln), Metriken-Skript | Evaluation & Daten |
 | `eval/data/` | Testset `testmails.json` mit Soll-Werten (wird committet) | Evaluation & Daten |
 | `data/` | SQLite, Checkpoints – lokal, **nicht** im Repo | alle |
@@ -43,7 +43,9 @@ Für echte Mails einmalig im Browser anmelden:
 python -m mcp_server.auth
 ```
 
-Sobald `token.json` existiert, arbeitet das Postfach direkt mit Gmail: Solange die Seite offen ist, werden beim Laden und danach jede Minute die neuesten 25 Mails aus dem Posteingang geprüft, neue analysiert, in die Ordner einsortiert und in Gmail gelabelt. Kalendereinträge passieren nur nach Bestätigung. Mit dem Haken «Testmails statt Gmail» läuft alles ohne Schreibzugriffe.
+Die Oberfläche läuft danach unter http://127.0.0.1:7860.
+
+Sobald `token.json` existiert, arbeitet das Postfach direkt mit Gmail: Solange die Seite offen ist, werden beim Laden und danach jede Minute die neuesten 25 Mails aus dem Posteingang geprüft, neue analysiert, in die Ordner einsortiert und in Gmail gelabelt. Kalendereinträge passieren nur nach Bestätigung. Das Kalendersymbol rechts zeigt die Termine der nächsten 14 Tage aus Google Kalender, und bei Terminvorschlägen warnt die Mail vor Überschneidungen. Im Zahnrad-Menü schaltet «Testmails statt Gmail» auf Testdaten ohne Schreibzugriffe um.
 
 ## Daten und Protokoll
 

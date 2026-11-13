@@ -1,4 +1,8 @@
-"""Zugriff auf Gmail und Google Calendar."""
+"""Direkter Zugriff auf die Google-APIs (Gmail und Google Kalender).
+
+Nur der MCP-Server (server.py) benutzt diese Datei. Die Anmeldung steht in
+token.json (erstellt mit `python -m mcp_server.auth`).
+"""
 
 import base64
 import os
@@ -13,6 +17,7 @@ from googleapiclient.discovery import build
 
 load_dotenv()
 
+# gmail.modify = lesen und Labels setzen (nicht löschen), calendar.events = Termine
 DEFAULT_SCOPES = (
     "https://www.googleapis.com/auth/gmail.modify,"
     "https://www.googleapis.com/auth/calendar.events"
@@ -22,6 +27,9 @@ TOKEN_FILE = Path(os.getenv("GOOGLE_TOKEN_FILE", "token.json"))
 CREDENTIALS_FILE = Path(os.getenv("GOOGLE_CREDENTIALS_FILE", "credentials.json"))
 
 
+# -----------------------------------------------------------------------------
+# 1. Anmeldung: Token laden und bei Bedarf automatisch erneuern.
+# -----------------------------------------------------------------------------
 def _credentials() -> Credentials:
     if not TOKEN_FILE.exists():
         raise RuntimeError(f"{TOKEN_FILE} fehlt. Zuerst anmelden: python -m mcp_server.auth")
@@ -42,6 +50,10 @@ def _calendar():
     return build("calendar", "v3", credentials=_credentials(), cache_discovery=False)
 
 
+# -----------------------------------------------------------------------------
+# 2. Mailtext auslesen: Gmail liefert Mails in verschachtelten Teilen (MIME),
+#    Base64-kodiert. Bevorzugt wird reiner Text, sonst HTML ohne Tags.
+# -----------------------------------------------------------------------------
 def _decode(data: str) -> str:
     return base64.urlsafe_b64decode(data + "===").decode("utf-8", errors="replace")
 
@@ -66,6 +78,9 @@ def _body(payload: dict) -> str:
     return ""
 
 
+# -----------------------------------------------------------------------------
+# 3. Gmail: Mails suchen, laden und mit Labels versehen
+# -----------------------------------------------------------------------------
 def list_ids(query: str, max_results: int) -> list[str]:
     listing = (
         _gmail().users().messages().list(userId="me", q=query, maxResults=max_results).execute()
@@ -94,6 +109,7 @@ def get_messages(ids: list[str]) -> list[dict]:
 
 
 def _label_id(service, name: str) -> str:
+    # Sucht das Label, legt es an, falls es noch nicht existiert.
     labels = service.users().labels().list(userId="me").execute().get("labels", [])
     for label in labels:
         if label["name"] == name:
@@ -105,6 +121,42 @@ def apply_label(message_id: str, label_name: str) -> None:
     service = _gmail()
     body = {"addLabelIds": [_label_id(service, label_name)]}
     service.users().messages().modify(userId="me", id=message_id, body=body).execute()
+
+
+# -----------------------------------------------------------------------------
+# 4. Google Kalender: Termine lesen und eintragen
+# -----------------------------------------------------------------------------
+def list_events(time_min: str, time_max: str, max_results: int) -> list[dict]:
+    """Termine zwischen time_min und time_max (ISO-8601 mit Zeitzone)."""
+    calendar_id = os.getenv("GOOGLE_CALENDAR_ID", "primary")
+    response = (
+        _calendar()
+        .events()
+        .list(
+            calendarId=calendar_id,
+            timeMin=time_min,
+            timeMax=time_max,
+            singleEvents=True,  # Serientermine einzeln auflisten
+            orderBy="startTime",
+            maxResults=max_results,
+        )
+        .execute()
+    )
+    events = []
+    for item in response.get("items", []):
+        start, end = item.get("start", {}), item.get("end", {})
+        events.append(
+            {
+                "title": item.get("summary", "(ohne Titel)"),
+                # Ganztägige Termine haben nur "date", alle anderen "dateTime".
+                "start": start.get("dateTime", start.get("date")),
+                "end": end.get("dateTime", end.get("date")),
+                "all_day": "date" in start,
+                "location": item.get("location"),
+                "link": item.get("htmlLink"),
+            }
+        )
+    return events
 
 
 def create_event(
