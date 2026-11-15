@@ -1,6 +1,8 @@
 """Holt neue Mails und lässt sie vom Agenten automatisch einsortieren.
 
 Die Oberfläche ruft sync() beim Öffnen und danach jede Minute auf.
+Neue Mails werden sofort gespeichert (Status "pending") und sind damit gleich
+sichtbar. Die Analyse folgt, sobald eine KI-Engine bereit ist.
 """
 
 import json
@@ -21,9 +23,11 @@ _lock = threading.Lock()  # verhindert, dass zwei Abrufe gleichzeitig laufen
 
 @dataclass
 class SyncResult:
-    new: int = 0       # erfolgreich verarbeitete neue Mails
+    new: int = 0       # erfolgreich analysierte Mails
     failed: int = 0    # Mails mit Fehler
     busy: bool = False  # True, wenn schon ein Abruf lief
+    fetched: int = 0   # neu abgerufene und gespeicherte Mails (noch ohne Analyse)
+    pending: int = 0   # Mails, die nach diesem Abruf noch auf die Analyse warten
 
 
 def source_name(use_testset: bool) -> str:
@@ -67,20 +71,30 @@ def _process(email: Email, use_testset: bool) -> bool:
 
 
 # -----------------------------------------------------------------------------
-# 3. Abruf: neue Mails holen und parallel verarbeiten.
+# 3. Abruf: neue Mails holen und sofort speichern, dann offene Mails analysieren.
+#    analyze=False (KI-Engine nicht bereit): nur abrufen und anzeigen.
 # -----------------------------------------------------------------------------
-def sync(use_testset: bool, limit: int = 25) -> SyncResult:
+def sync(use_testset: bool, limit: int = 25, analyze: bool = True) -> SyncResult:
     if not _lock.acquire(blocking=False):
         return SyncResult(busy=True)
     try:
-        emails = _fetch_new(use_testset, limit)
+        source = source_name(use_testset)
+        fetched = store.save_pending(_fetch_new(use_testset, limit), source)
+        if fetched:
+            store.log("abgerufen", details=f"{fetched} neue Mails", source=source)
+        if not analyze:
+            return SyncResult(fetched=fetched, pending=len(store.pending_emails(source, 10_000)))
+
+        emails = store.pending_emails(source, limit)
         if not emails:
-            return SyncResult()
-        store.log(
-            "abgerufen", details=f"{len(emails)} neue Mails", source=source_name(use_testset)
-        )
+            return SyncResult(fetched=fetched)
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
             outcomes = list(pool.map(lambda email: _process(email, use_testset), emails))
-        return SyncResult(new=sum(outcomes), failed=len(outcomes) - sum(outcomes))
+        return SyncResult(
+            new=sum(outcomes),
+            failed=len(outcomes) - sum(outcomes),
+            fetched=fetched,
+            pending=len(store.pending_emails(source, 10_000)),
+        )
     finally:
         _lock.release()

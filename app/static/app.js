@@ -115,6 +115,12 @@ function chip(category) {
   return el("span", { class: `chip ${key}`, text: CHIP_TEXT[key] || "Nicht zugeordnet" });
 }
 
+// Chip passend zum Stand der Mail: noch nicht analysiert, fehlgeschlagen oder Kategorie.
+function mailChip(mail) {
+  if (mail.status === "pending") return el("span", { class: "chip pending", text: "Nicht analysiert" });
+  return chip(mail.status === "failed" ? null : mail.category);
+}
+
 function showView(name) {
   for (const view of ["list", "mail", "log"]) $(`#${view}-view`).hidden = view !== name;
 }
@@ -172,7 +178,7 @@ function mailRow(mail) {
     },
     el("span", { class: "sender", text: sender.name, title: mail.sender }),
     el("span", { class: "subject-cell" },
-      state.box === "inbox" ? chip(mail.status === "failed" ? null : mail.category) : null,
+      state.box === "inbox" ? mailChip(mail) : null,
       el("span", { class: "subject", text: mail.subject || "(kein Betreff)" }),
       el("span", { class: "snippet", text: mail.summary ? ` – ${mail.summary}` : "" }),
     ),
@@ -234,8 +240,9 @@ function renderMail(mail) {
   const sender = parseSender(mail.sender);
   const avatar = el("div", { class: "avatar", text: (sender.name.trim()[0] || "?").toUpperCase() });
   avatar.style.background = avatarColor(sender.address || sender.name);
-  $("#mail-article").replaceChildren(
-    el("h1", {}, el("span", { text: mail.subject || "(kein Betreff)" }), chip(mail.status === "failed" ? null : mail.category)),
+  // filter(Boolean): eventCard() liefert null ohne Termin, sonst stünde "null" im Text.
+  $("#mail-article").replaceChildren(...[
+    el("h1", {}, el("span", { text: mail.subject || "(kein Betreff)" }), mailChip(mail)),
     el("div", { class: "mail-head" },
       avatar,
       el("div", { class: "from" },
@@ -246,11 +253,16 @@ function renderMail(mail) {
     ),
     el("div", { class: "card" },
       el("div", { class: "card-title" }, icon("auto_awesome"), el("span", { text: "KI-Zusammenfassung" })),
-      el("div", { text: mail.summary || "" }),
+      el("div", {
+        class: mail.status === "pending" ? "pending-note" : null,
+        text: mail.status === "pending"
+          ? "Noch nicht analysiert. Sobald die KI-Engine bereit ist, wird die Mail beim nächsten Abruf einsortiert."
+          : mail.summary || "",
+      }),
     ),
     eventCard(mail),
     el("div", { class: "body", text: mail.body || "" }),
-  );
+  ].filter(Boolean));
 }
 
 async function openMail(id) {
@@ -368,15 +380,19 @@ async function sync() {
     const result = await api("/api/sync", { method: "POST" });
     const time = new Date().toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" });
     $("#sync-status").textContent = result.skipped
-      ? `Abruf pausiert (${time}): KI-Engine nicht bereit`
-      : `Zuletzt geprüft: ${time}`;
+      ? `Abgerufen ${time}. Analyse pausiert, KI-Engine nicht bereit` +
+        (result.pending ? ` (${result.pending} warten)` : "")
+      : `Zuletzt geprüft: ${time}` + (result.pending ? `, ${result.pending} warten auf Analyse` : "");
     loadEngine();
     if (result.new || result.failed) {
-      let message = `${result.new} neue Mail${result.new === 1 ? "" : "s"} einsortiert`;
+      let message = `${result.new} Mail${result.new === 1 ? "" : "s"} analysiert und einsortiert`;
       if (result.failed) message += `, ${result.failed} fehlgeschlagen`;
       toast(message);
-      if (!$("#list-view").hidden) loadList();
+    } else if (result.fetched) {
+      toast(`${result.fetched} neue Mail${result.fetched === 1 ? "" : "s"} abgerufen` +
+        (result.skipped ? ", Analyse folgt, sobald die KI-Engine bereit ist" : ""));
     }
+    if ((result.new || result.failed || result.fetched) && !$("#list-view").hidden) loadList();
     await refreshNav();
   } catch (error) {
     $("#sync-status").textContent = "Abruf fehlgeschlagen";

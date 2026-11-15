@@ -65,15 +65,21 @@ def status(testset: bool = False):
 @app.post("/api/sync")
 def sync(testset: bool = False):
     """Neue Mails holen und vom Agenten einsortieren lassen."""
+    # Ohne bereite Engine werden Mails nur abgerufen und angezeigt, nicht analysiert.
+    # Sonst würde jede Mail als fehlgeschlagen enden.
     engine = llm.engine_status()
-    if not engine.ready:
-        # Ohne funktionierende Engine würde jede Mail als fehlgeschlagen enden.
-        return {"new": 0, "failed": 0, "busy": False, "skipped": engine.problem}
     try:
-        result = inbox.sync(testset)
+        result = inbox.sync(testset, analyze=engine.ready)
     except Exception as error:
         raise HTTPException(502, f"Abruf fehlgeschlagen: {error}")
-    return {"new": result.new, "failed": result.failed, "busy": result.busy}
+    return {
+        "new": result.new,
+        "failed": result.failed,
+        "busy": result.busy,
+        "fetched": result.fetched,
+        "pending": result.pending,
+        "skipped": None if engine.ready else engine.problem,
+    }
 
 
 # -----------------------------------------------------------------------------
