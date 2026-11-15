@@ -30,6 +30,7 @@ const state = {
   testset: false,      // true = Testmails statt Gmail
   openId: null,        // ID der geöffneten Mail
   calendarOpen: false, // Kalender rechts sichtbar?
+  engine: null,        // Antwort von /api/engine
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -366,7 +367,10 @@ async function sync() {
   try {
     const result = await api("/api/sync", { method: "POST" });
     const time = new Date().toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" });
-    $("#sync-status").textContent = `Zuletzt geprüft: ${time}`;
+    $("#sync-status").textContent = result.skipped
+      ? `Abruf pausiert (${time}): KI-Engine nicht bereit`
+      : `Zuletzt geprüft: ${time}`;
+    loadEngine();
     if (result.new || result.failed) {
       let message = `${result.new} neue Mail${result.new === 1 ? "" : "s"} einsortiert`;
       if (result.failed) message += `, ${result.failed} fehlgeschlagen`;
@@ -389,12 +393,202 @@ function applyMode() {
   try { localStorage.setItem("localmail-testset", state.testset ? "1" : "0"); } catch (e) { /* egal */ }
 }
 
+// ----- 9b. KI-Engine: lokal (Ollama, LM Studio) oder Cloud-API -----
+// Der API-Key wird nur beim Übernehmen an den eigenen Server geschickt und nie
+// zurückgeliefert. Er landet nicht im Browser-Speicher.
+const engineDraft = { mode: "local", provider: null };
+
+function renderEngineChip(info) {
+  const chipNode = $("#engine-chip");
+  chipNode.classList.toggle("error", !info.ready);
+  $("#engine-chip-icon").textContent = info.is_local ? "computer" : "cloud";
+  $("#engine-chip-text").textContent = info.ready
+    ? `${info.name.replace(" (lokal)", "")} · ${info.model}`
+    : "Engine nicht bereit";
+  chipNode.title = info.ready
+    ? `KI-Engine: ${info.name}, Modell ${info.model}. Klicken zum Ändern.`
+    : `KI-Engine nicht bereit: ${info.problem}`;
+  $("#engine-alert").hidden = info.ready;
+  $("#engine-alert-text").textContent = `KI-Engine nicht bereit (${info.name}): ${info.problem}`;
+}
+
+async function loadEngine() {
+  try {
+    state.engine = await api("/api/engine");
+    renderEngineChip(state.engine);
+  } catch (error) {
+    toast(error.message);
+  }
+  return state.engine;
+}
+
+function setEngineMode(mode) {
+  engineDraft.mode = mode;
+  document.querySelectorAll(".segmented button").forEach((button) => {
+    const active = button.dataset.mode === mode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  $("#engine-local").hidden = mode !== "local";
+  $("#engine-cloud").hidden = mode !== "cloud";
+  $("#engine-error").hidden = true;
+}
+
+function renderServers() {
+  const info = state.engine;
+  const servers = Object.entries(info.local);
+  if (!engineDraft.provider || !info.local[engineDraft.provider]) {
+    const running = servers.find(([, server]) => server.running);
+    engineDraft.provider = info.is_local ? info.provider : (running ? running[0] : servers[0][0]);
+  }
+  $("#server-list").replaceChildren(...servers.map(([key, server]) => {
+    const classes = ["server"];
+    if (server.running) classes.push("running");
+    if (key === engineDraft.provider) classes.push("selected");
+    const count = server.models.length;
+    return el("button",
+      {
+        type: "button",
+        class: classes.join(" "),
+        disabled: !server.running,
+        "aria-pressed": String(key === engineDraft.provider),
+        onclick: () => { engineDraft.provider = key; renderServers(); },
+      },
+      icon(server.running ? "check_circle" : "radio_button_unchecked"),
+      el("span", { class: "t", text: server.name.replace(" (lokal)", "") }),
+      el("span", { class: "badge", text: server.running ? "läuft" : "nicht gefunden" }),
+      el("span", {
+        class: "s",
+        text: server.running ? `${server.url} · ${count} Modell${count === 1 ? "" : "e"}` : `${server.url} antwortet nicht`,
+      }),
+    );
+  }));
+
+  const server = info.local[engineDraft.provider];
+  const select = $("#local-model");
+  const models = server.running ? server.models : [];
+  select.replaceChildren(...models.map((name) => el("option", { value: name, text: name })));
+  select.disabled = !models.length;
+  if (!models.length) {
+    select.replaceChildren(el("option", { text: "Kein lokaler Server gefunden. Ollama oder LM Studio starten." }));
+  }
+  const preferred = [info.provider === engineDraft.provider ? info.model : null, server.default_model]
+    .find((name) => name && models.includes(name));
+  if (preferred) select.value = preferred;
+}
+
+async function openEngineDialog() {
+  $("#settings-menu").hidden = true;
+  const info = await loadEngine();
+  if (!info) return;
+  engineDraft.provider = null;
+  setEngineMode(info.is_local ? "local" : "cloud");
+  renderServers();
+  $("#cloud-url").value = info.cloud.base_url;
+  $("#cloud-model").value = info.cloud.model;
+  $("#cloud-key").value = "";
+  $("#cloud-key").placeholder = info.cloud.has_key
+    ? "Key ist gesetzt (wird nicht angezeigt). Leer lassen, um ihn zu behalten."
+    : "API-Key eingeben";
+  $("#test-result").hidden = true;
+  $("#engine-dialog").showModal();
+}
+
+function engineChoice() {
+  if (engineDraft.mode === "local") {
+    return { provider: engineDraft.provider, model: $("#local-model").disabled ? "" : $("#local-model").value };
+  }
+  return {
+    provider: "cloud",
+    base_url: $("#cloud-url").value.trim(),
+    model: $("#cloud-model").value.trim(),
+    api_key: $("#cloud-key").value.trim(),
+  };
+}
+
+async function postEngine(path, body) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || `Fehler ${response.status}`);
+  return data;
+}
+
+async function rescanServers() {
+  await loadEngine();
+  renderServers();
+}
+
+async function testEngine() {
+  const box = $("#test-result");
+  box.hidden = false;
+  box.className = "test-result";
+  box.textContent = "Teste…";
+  try {
+    const result = await postEngine("/api/engine/test", engineChoice());
+    box.classList.toggle("error", !result.ok);
+    box.textContent = result.message;
+  } catch (error) {
+    box.classList.add("error");
+    box.textContent = error.message;
+  }
+}
+
+async function applyEngine() {
+  const button = $("#engine-apply");
+  button.disabled = true;
+  try {
+    const info = await postEngine("/api/engine", engineChoice());
+    state.engine = info;
+    renderEngineChip(info);
+    $("#cloud-key").value = "";
+    if (info.ready) {
+      $("#engine-dialog").close();
+      toast(`KI-Engine: ${info.name}, ${info.model}`);
+      sync();
+    } else {
+      const error = $("#engine-error");
+      error.hidden = false;
+      error.textContent = `Gespeichert, aber nicht bereit: ${info.problem}`;
+    }
+  } catch (error) {
+    const box = $("#engine-error");
+    box.hidden = false;
+    box.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function bindEngine() {
+  $("#engine-chip").addEventListener("click", openEngineDialog);
+  $("#engine-menu-btn").addEventListener("click", openEngineDialog);
+  $("#engine-alert-btn").addEventListener("click", openEngineDialog);
+  $("#engine-close").addEventListener("click", () => $("#engine-dialog").close());
+  $("#engine-cancel").addEventListener("click", () => $("#engine-dialog").close());
+  $("#engine-apply").addEventListener("click", applyEngine);
+  $("#rescan-btn").addEventListener("click", rescanServers);
+  $("#test-btn").addEventListener("click", testEngine);
+  document.querySelectorAll(".segmented button").forEach((button) => {
+    button.addEventListener("click", () => {
+      setEngineMode(button.dataset.mode);
+      if (button.dataset.mode === "local") rescanServers();
+    });
+  });
+  // Key nicht im Formular stehen lassen, wenn der Dialog ohne Übernehmen schliesst.
+  $("#engine-dialog").addEventListener("close", () => ($("#cloud-key").value = ""));
+}
+
 // ----- 10. Start: Knöpfe verbinden, Modus wählen, ersten Abruf starten -----
 async function init() {
   $("#menu-btn").addEventListener("click", () => {
     if (window.matchMedia("(max-width: 860px)").matches) $("#sidebar").classList.toggle("open");
     else $("#sidebar").classList.toggle("collapsed");
   });
+  bindEngine();
   $("#sync-btn").addEventListener("click", sync);
   $("#refresh-btn").addEventListener("click", sync);
   $("#back-btn").addEventListener("click", () => { state.openId = null; loadList(); });
@@ -435,6 +629,8 @@ async function init() {
   applyMode();
 
   selectBox("inbox");
+  const engine = await loadEngine();
+  if (engine && !engine.ready) openEngineDialog();
   sync();
   setInterval(sync, SYNC_INTERVAL_MS);
 }

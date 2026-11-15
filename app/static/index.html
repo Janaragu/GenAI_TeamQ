@@ -36,6 +36,9 @@
       </button>
     </form>
     <div class="top-actions">
+      <button class="engine-chip" id="engine-chip" title="KI-Engine wählen" aria-label="KI-Engine wählen">
+        <span class="dot"></span><span class="ms" id="engine-chip-icon">memory</span><span id="engine-chip-text">Engine…</span>
+      </button>
       <span class="mode-badge" id="mode-badge" hidden>Testmodus</span>
       <button class="icon-btn" id="settings-btn" title="Einstellungen" aria-label="Einstellungen">
         <span class="ms">settings</span>
@@ -46,9 +49,19 @@
           <span>Testmails statt Gmail</span>
         </label>
         <p class="hint" id="settings-hint"></p>
+        <button class="menu-item" id="engine-menu-btn" type="button">
+          <span class="ms">memory</span><span>KI-Engine einrichten</span>
+        </button>
       </div>
     </div>
   </header>
+
+  <!-- ===== Hinweis, wenn die KI-Engine nicht bereit ist ===== -->
+  <div class="engine-alert" id="engine-alert" role="alert" hidden>
+    <span class="ms">error</span>
+    <span id="engine-alert-text"></span>
+    <button class="btn small" id="engine-alert-btn" type="button">Engine einrichten</button>
+  </div>
 
   <div class="layout">
 
@@ -118,6 +131,57 @@
       </button>
     </div>
   </div>
+
+  <!-- ===== Dialog: KI-Engine wählen (lokal oder Cloud) ===== -->
+  <dialog class="dialog" id="engine-dialog" aria-labelledby="engine-title">
+    <div class="dialog-head">
+      <span class="ms">memory</span>
+      <h2 id="engine-title">KI-Engine</h2>
+      <button class="icon-btn" id="engine-close" type="button" title="Schliessen" aria-label="Schliessen">
+        <span class="ms">close</span>
+      </button>
+    </div>
+    <p class="dialog-sub">Welches Sprachmodell liest und sortiert die Mails?</p>
+
+    <div class="segmented" role="tablist">
+      <button type="button" role="tab" data-mode="local"><span class="ms">computer</span>Lokal</button>
+      <button type="button" role="tab" data-mode="cloud"><span class="ms">cloud</span>Cloud-API</button>
+    </div>
+
+    <section id="engine-local">
+      <div class="server-list" id="server-list"></div>
+      <label class="field">
+        <span>Modell</span>
+        <select id="local-model"></select>
+      </label>
+      <button type="button" class="text-btn" id="rescan-btn"><span class="ms">refresh</span>Erneut suchen</button>
+      <p class="privacy"><span class="ms">lock</span>Die Mails verlassen diesen Rechner nicht. Ollama und LM Studio brauchen keinen API-Key.</p>
+    </section>
+
+    <section id="engine-cloud" hidden>
+      <label class="field">
+        <span>Basis-URL</span>
+        <input id="cloud-url" type="url" placeholder="https://…/v1" autocomplete="off" spellcheck="false">
+      </label>
+      <label class="field">
+        <span>Modell</span>
+        <input id="cloud-model" type="text" placeholder="z. B. gpt-6-luna" autocomplete="off" spellcheck="false">
+      </label>
+      <label class="field">
+        <span>API-Key</span>
+        <input id="cloud-key" type="password" autocomplete="off" spellcheck="false">
+      </label>
+      <button type="button" class="text-btn" id="test-btn"><span class="ms">network_check</span>Verbindung testen</button>
+      <p class="test-result" id="test-result" hidden></p>
+      <p class="privacy"><span class="ms">lock</span>Der Key bleibt nur im Arbeitsspeicher dieser Instanz: nicht gespeichert, nicht im Protokoll, nach dem Neustart weg. Dauerhaft über die eigene .env. Mail-Inhalte gehen an diesen Anbieter.</p>
+    </section>
+
+    <p class="dialog-error" id="engine-error" hidden></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn" id="engine-cancel">Abbrechen</button>
+      <button type="button" class="btn filled" id="engine-apply">Übernehmen</button>
+    </div>
+  </dialog>
 
   <!-- Kurze Meldungen unten links -->
   <div class="toast" id="toast" role="status" hidden></div>

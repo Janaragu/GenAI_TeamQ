@@ -47,6 +47,21 @@ Die Oberfläche läuft danach unter http://127.0.0.1:7860.
 
 Sobald `token.json` existiert, arbeitet das Postfach direkt mit Gmail: Solange die Seite offen ist, werden beim Laden und danach jede Minute die neuesten 25 Mails aus dem Posteingang geprüft, neue analysiert, in die Ordner einsortiert und in Gmail gelabelt. Kalendereinträge passieren nur nach Bestätigung. Das Kalendersymbol rechts zeigt die Termine der nächsten 14 Tage aus Google Kalender, und bei Terminvorschlägen warnt die Mail vor Überschneidungen. Im Zahnrad-Menü schaltet «Testmails statt Gmail» auf Testdaten ohne Schreibzugriffe um.
 
+## Engine wählen (Cloud oder lokal)
+
+Oben rechts zeigt ein Chip, welche KI-Engine gerade analysiert (grün = bereit, rot = nicht bereit). Ein Klick darauf, oder Zahnrad → «KI-Engine einrichten», öffnet den Dialog:
+
+- **Lokal:** Die Seite sucht nach Ollama (`localhost:11434`) und LM Studio (`localhost:1234`) und listet deren Modelle. Kein API-Key nötig, die Mails verlassen den Rechner nicht.
+- **Cloud-API:** Basis-URL, Modell und API-Key eines OpenAI-kompatiblen Anbieters. «Verbindung testen» fragt nur die Modellliste ab.
+
+Ist die Engine nicht bereit (kein Key, Server aus, Modell fehlt), erscheint ein roter Hinweis, der Dialog öffnet sich beim Laden, und der Abruf pausiert, statt jede Mail als fehlgeschlagen zu markieren.
+
+**Für Dozierende und Teammitglieder mit eigenem Zugang:** Jede Instanz läuft auf dem eigenen Rechner und liest die eigene `.env`.
+
+- Dauerhaft: `cp .env.example .env` und eigene Werte eintragen (`LLM_BACKEND`, Key oder lokales Modell).
+- Nur für eine Sitzung: Key im Dialog eingeben. Er liegt dann nur im Arbeitsspeicher des Servers, wird nie an den Browser zurückgeschickt, nicht gespeichert, nicht protokolliert und ist nach dem Neustart weg.
+- Der Server lauscht nur auf `127.0.0.1` und ist damit nur vom eigenen Rechner aus erreichbar. Nicht auf `0.0.0.0` umstellen, sonst könnten andere im Netz die eingestellte Engine samt Key mitbenutzen.
+
 ## Daten und Protokoll
 
 - `data/localmail.sqlite` enthält die Tabellen `emails` (Mails samt Zuordnung) und `activity_log` (jede Aktion mit Zeit, Quelle und Akteur).
