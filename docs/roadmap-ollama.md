@@ -13,7 +13,7 @@ Ziel: LocalMail AI analysiert Mails vollständig lokal mit Ollama, und wir könn
 | `qwen3.5:4b` | Testmail 1 korrekt als `termin` erkannt, aber **133 s** pro Mail. Laut `ollama show` ist «thinking» standardmässig an (Stufen: `false`, `true`). |
 | `localmail:latest` | Abbruch mit `LengthFinishReasonError`: 4096 Tokens erreicht, davon 3760 Ausgabe. Das Modelfile hat `TEMPLATE {{ .Prompt }}`, d. h. kein Chat-Template; System- und User-Rolle werden nicht als Chat formatiert. |
 | LangSmith | `LANGSMITH_TRACING=true` ohne Key, jeder Aufruf erzeugt `401 Unauthorized`-Meldungen |
-| Dashboard | Umschalter API-Key ↔ Ollama inkl. Modellauswahl und Fehleranzeige ist umgesetzt (`agent/llm.py`, `app/main.py`) |
+| Oberfläche | Engine-Dialog (lokal: Ollama/LM Studio mit Erkennung, oder Cloud-API) mit Fehleranzeige ist umgesetzt (`agent/llm.py`, `app/main.py`, `app/static/`) |
 
 ## Schritte
 
@@ -52,7 +52,7 @@ Ziel: LocalMail AI analysiert Mails vollständig lokal mit Ollama, und wir könn
 - **Fertig, wenn:** Eine Tabelle mit den drei Systemen existiert, die wir in der Präsentation zeigen können.
 
 ### 7. Absichern für den Alltag
-- [ ] Beim Wechsel der Engine im Gmail-Modus startet der nächste automatische Abruf (spätestens nach 60 s) mit echten Mails und setzt Labels. Für Tests immer zuerst «Testmails statt Gmail» anhaken.
+- [ ] Nach «Übernehmen» einer bereiten Engine startet sofort ein Abruf; im Gmail-Modus mit echten Mails und Labels. Für Tests immer zuerst «Testmails statt Gmail» anhaken.
 - [ ] Entscheiden, ob die Engine-Wahl einen Neustart überdauern soll (heute gilt nach Neustart wieder `LLM_BACKEND` aus der `.env`).
 - [ ] README um den Abschnitt «Lokal mit Ollama» ergänzen (Installation, Modell, `.env`-Werte).
 
