@@ -21,6 +21,7 @@ from schemas import AgentResult, Email
 load_dotenv()
 
 STATUS_FAILED = "failed"  # Mail konnte nicht analysiert werden
+STATUS_PENDING = "pending"  # abgerufen und sichtbar, aber noch nicht analysiert
 INBOX = "inbox"           # Posteingang = alles ausser Spam
 
 # -----------------------------------------------------------------------------
@@ -38,10 +39,10 @@ CREATE TABLE IF NOT EXISTS emails (
     category TEXT,
     summary TEXT,
     label TEXT,
-    status TEXT NOT NULL,          -- 'done', 'awaiting_confirmation' oder 'failed'
+    status TEXT NOT NULL,          -- 'pending', 'done', 'awaiting_confirmation' oder 'failed'
     event_json TEXT,               -- Terminvorschlag als JSON
     event_link TEXT,               -- Link zum Kalendereintrag
-    processed_at TEXT NOT NULL,
+    processed_at TEXT NOT NULL,    -- bei 'pending': Zeitpunkt des Abrufs
     seen INTEGER NOT NULL DEFAULT 0  -- 1 = in der Oberfläche geöffnet
 );
 CREATE TABLE IF NOT EXISTS activity_log (
@@ -106,9 +107,17 @@ def save_result(email: Email, result: AgentResult, source: str) -> None:
     event = result.analysis.event
     with _db() as db:
         db.execute(
-            "INSERT OR REPLACE INTO emails (id, source, thread_id, sender, subject, body, received_at,"
+            "INSERT INTO emails (id, source, thread_id, sender, subject, body, received_at,"
             " category, summary, label, status, event_json, event_link, processed_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            # Upsert statt REPLACE: so bleibt "seen" erhalten, wenn eine schon
+            # angezeigte Mail (Status pending) ihr Analyse-Ergebnis bekommt.
+            " ON CONFLICT(id) DO UPDATE SET source = excluded.source, thread_id = excluded.thread_id,"
+            " sender = excluded.sender, subject = excluded.subject, body = excluded.body,"
+            " received_at = excluded.received_at, category = excluded.category,"
+            " summary = excluded.summary, label = excluded.label, status = excluded.status,"
+            " event_json = excluded.event_json, event_link = excluded.event_link,"
+            " processed_at = excluded.processed_at",
             (
                 email.id,
                 source,
@@ -132,8 +141,10 @@ def save_failed(email: Email, source: str, reason: str) -> None:
     """Merkt sich eine Mail, die dauerhaft nicht analysiert werden kann."""
     with _db() as db:
         db.execute(
-            "INSERT OR REPLACE INTO emails (id, source, thread_id, sender, subject, body, received_at,"
-            " summary, status, processed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO emails (id, source, thread_id, sender, subject, body, received_at,"
+            " summary, status, processed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(id) DO UPDATE SET summary = excluded.summary, status = excluded.status,"
+            " processed_at = excluded.processed_at",
             (
                 email.id,
                 source,
@@ -147,6 +158,55 @@ def save_failed(email: Email, source: str, reason: str) -> None:
                 _now(),
             ),
         )
+
+
+def save_pending(emails: list[Email], source: str) -> int:
+    """Speichert frisch abgerufene Mails sofort, damit sie vor der Analyse sichtbar sind.
+
+    Bereits bekannte Mails bleiben unverändert. Gibt die Anzahl neu gespeicherter Mails zurück.
+    """
+    with _db() as db:
+        before = db.total_changes
+        db.executemany(
+            "INSERT OR IGNORE INTO emails (id, source, thread_id, sender, subject, body, received_at,"
+            " status, processed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    email.id,
+                    source,
+                    email.thread_id,
+                    email.sender,
+                    email.subject,
+                    email.body,
+                    email.received_at.isoformat() if email.received_at else None,
+                    STATUS_PENDING,
+                    _now(),
+                )
+                for email in emails
+            ],
+        )
+        return db.total_changes - before
+
+
+def pending_emails(source: str, limit: int) -> list[Email]:
+    """Noch nicht analysierte Mails, neueste zuerst."""
+    with _db() as db:
+        rows = db.execute(
+            "SELECT id, thread_id, sender, subject, body, received_at FROM emails"
+            " WHERE source = ? AND status = ? ORDER BY received_at DESC LIMIT ?",
+            (source, STATUS_PENDING, limit),
+        ).fetchall()
+    return [
+        Email(
+            id=row["id"],
+            thread_id=row["thread_id"] or "",
+            sender=row["sender"] or "",
+            subject=row["subject"] or "",
+            body=row["body"] or "",
+            received_at=row["received_at"],
+        )
+        for row in rows
+    ]
 
 
 def update_after_decision(result: AgentResult) -> None:
