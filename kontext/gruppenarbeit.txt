@@ -1,0 +1,52 @@
+Beschreibung der Gruppenarbeit
+
+Die Gruppenarbeit ist ein obligatorischer Bestandteil des Moduls und wird während der Projektphase gemäss Semesterplan bearbeitet. Ein wesentlicher Teil der Projektarbeit findet während der regulären Unterrichtszeit statt und wird durch die Dozierenden begleitet und gecoacht.
+
+Ziel der Gruppenarbeit ist es, die im Modul behandelten Konzepte der generativen KI praktisch auf einen konkreten Anwendungsfall anzuwenden. Im Zentrum steht die Entwicklung einer funktionsfähigen LLM-basierten Lösung, bei der geeignete Modelle, Methoden und Werkzeuge ausgewählt, kombiniert und kritisch beurteilt werden.
+
+Die Studierenden arbeiten in Teams von in der Regel 3 bis 4 Personen. Jedes Team definiert einen eigenen Anwendungsfall mit fachlicher oder geschäftlicher Relevanz.
+Schwerpunkt: Entwicklung eines LLM-Agenten
+
+Der Schwerpunkt liegt typischerweise auf der Entwicklung eines LLM-Agenten oder eines agentischen Systems. Je nach Projekt können insbesondere Prompt Engineering, LangChain/LangGraph, Model Context Protocol (MCP), Tool-Use, Retrieval-Augmented Generation (RAG), Guardrails, Multi-Agent-Kollaboration sowie weitere im Modul behandelte Konzepte eingesetzt werden.
+
+Auch andere Schwerpunkte im Bereich generativer KI sind möglich, sofern sie einen vergleichbaren fachlichen und technischen Umfang aufweisen und mit den Dozierenden abgestimmt werden. Dazu gehören beispielsweise die Anpassung eines LLMs mittels Post-Training, die Entwicklung oder Evaluation von Embedding- und Retrieval-Verfahren oder eine systematische Untersuchung unterschiedlicher LLMs.
+Optional: Apertus und Hack Apertus
+
+Die Verwendung von Apertus ist ausdrücklich möglich, aber nicht verpflichtend. Entsprechende Erfahrungen können später in die Gruppenarbeit einfliessen. Mögliche Apertus-bezogene Projekte sind beispielsweise:
+
+    Einsatz von Apertus als LLM innerhalb eines Agenten oder einer LLM-Anwendung;
+    Vergleich von Apertus mit anderen offenen oder kommerziellen LLMs;
+    Anpassung von Apertus mittels Supervised Fine-Tuning oder anderer Post-Training-Verfahren;
+    Untersuchung von Retrieval-, Embedding- oder RAG-Ansätzen im Zusammenspiel mit Apertus;
+    Evaluation von Qualität, Robustheit, Bias, Guardrails, Tool-Use oder anderen relevanten Eigenschaften.
+
+Ergebnisse oder Artefakte aus dem Hack Apertus bzw. dem Online Hack Apertus können als Ausgangspunkt für die Gruppenarbeit verwendet und im Rahmen des Moduls weiterentwickelt werden.
+Beispielprojekte
+
+    LLM-Agent für einen Geschäftsprozess:
+    Entwicklung eines Agenten für beispielsweise Kundenservice, Wissensmanagement, Recherche oder Entscheidungsunterstützung. Der Agent verwendet LangChain/LangGraph und kann über MCP oder andere Schnittstellen auf externe Werkzeuge und Datenquellen zugreifen. Ergänzend können RAG und Guardrails integriert werden.
+
+    Multi-Agent-System:
+    Entwicklung eines Systems, in dem mehrere spezialisierte Agenten unterschiedliche Aufgaben übernehmen und gemeinsam einen komplexeren Geschäftsprozess bearbeiten. Untersucht werden können beispielsweise Rollenverteilung, Koordination, Tool-Use und Qualität der Zusammenarbeit.
+
+    RAG- und Wissenssystem:
+    Entwicklung einer LLM-basierten Anwendung für die Suche und Beantwortung von Fragen über eine fachliche Dokumentensammlung. Dabei können unterschiedliche Retrieval-, Embedding- und Reranking-Verfahren untersucht und hinsichtlich ihrer Qualität verglichen werden.
+
+    Apertus-basierte Anwendung oder Modellanpassung:
+    Entwicklung eines Prototyps auf Basis von Apertus oder Anpassung von Apertus für einen spezifischen Anwendungsfall mittels Post-Training. Alternativ kann Apertus systematisch mit anderen LLMs hinsichtlich Qualität, Zuverlässigkeit, Ressourcenbedarf oder anderer relevanter Kriterien verglichen werden.
+
+Abschlusspräsentation
+
+Am 23.11.2026 (KW 48) präsentiert jedes Team seine Gruppenarbeit. Die Präsentation dauert 10 Minuten und soll insbesondere die Problemstellung, den gewählten Lösungsansatz, die technische Umsetzung, die Evaluation sowie die wichtigsten Erkenntnisse und Limitationen darstellen. Eine Demonstration der entwickelten Lösung soll nach Möglichkeit Bestandteil der Präsentation sein.
+
+Alle Gruppenmitglieder nehmen an der Präsentation teil und müssen in der Lage sein, ihren individuellen Beitrag sowie die wesentlichen fachlichen und technischen Entscheidungen des Gesamtprojekts zu erläutern. Die Dozierenden können während oder im Anschluss an die Präsentation individuelle Rückfragen stellen.
+Prüfungsrelevanz und Erfüllungskriterien
+
+Die Gruppenarbeit wird mit «erfüllt» bzw. «nicht erfüllt» bewertet. Die erfolgreich erfüllte Gruppenarbeit ist jedoch Voraussetzung für die Zulassung zur individuellen mündlichen Abschlussprüfung.
+
+Die individuelle mündliche Abschlussprüfung zählt 100 % der Gesamtpunkte des Moduls. Rund 50 % des Prüfungsgegenstands beziehen sich auf die Gruppenarbeit und den individuellen Beitrag, während sich die übrigen rund 50 % auf die im Unterricht behandelten Inhalte beziehen.
+
+Im Zusammenhang mit der Gruppenarbeit können insbesondere Fragen zur Problemstellung, zur Modell- und Methodenwahl, zur Architektur, zur technischen Umsetzung, zu verwendeten Daten und Werkzeugen, zur Evaluation, zu Limitationen sowie zu möglichen alternativen Lösungsansätzen gestellt werden. Von allen Studierenden wird erwartet, dass sie neben ihrem individuellen Beitrag auch die wesentlichen Zusammenhänge der gesamten Gruppenarbeit verstehen.
+Abgabe
+
+Abzugeben sind ein Link auf die funktionsfähige bzw. ausführbare Lösung sowie die zur Nachvollziehbarkeit erforderlichen Projektartefakte und die Abschlusspräsentation, vorzugsweise als PDF. Je nach Projekt kann die Lösung beispielsweise als Code-Repository, ausführbares Notebook, LangChain/LangGraph-Anwendung oder bereitgestellter Prototyp umgesetzt werden.
