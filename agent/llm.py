@@ -162,10 +162,17 @@ def get_llm() -> ChatOpenAI:
     if config.provider == CLOUD:
         # Keine temperature setzen: Die Reasoning-Modelle am FHNW-Proxy lehnen alles ausser 1 ab.
         return ChatOpenAI(model=config.model, base_url=config.base_url, api_key=config.api_key, timeout=120)
+    extra = {}
+    if config.provider == OLLAMA:
+        # Denkmodus aus: Mit qwen3.5:4b dauerte eine Mail sonst ~120 s statt ~3 s, und vier
+        # parallele Anfragen liefen in den Timeout. Gemessen am 15.11.2026 auf den 22 Testmails:
+        # 21/22 Kategorien richtig. extra_body={"think": False} wirkte über /v1 nicht.
+        extra["reasoning_effort"] = "none"
     return ChatOpenAI(
         model=config.model,
         base_url=config.base_url,
         api_key=config.api_key or LOCAL_PLACEHOLDER_KEY,
         temperature=0,
         timeout=300,
+        **extra,
     )
