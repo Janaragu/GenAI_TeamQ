@@ -10,7 +10,7 @@ Ziel: LocalMail AI analysiert Mails vollständig lokal mit Ollama, und wir könn
 | Ollama | Version 0.40.15, läuft unter `http://localhost:11434` |
 | Installierte Modelle | `qwen3.5:4b`, `localmail:latest`, `hf.co/lmstudio-community/Qwen3.5-4B-GGUF:Q4_K_M` |
 | `.env` | `OLLAMA_MODEL=qwen2.5:7b`, dieses Modell ist **nicht** installiert |
-| `qwen3.5:4b` | Testmail 1 korrekt als `termin` erkannt, aber **133 s** pro Mail. Laut `ollama show` ist «thinking» standardmässig an (Stufen: `false`, `true`). |
+| `qwen3.5:4b` | Mit Denkmodus (Standard): Testmail 1 korrekt, aber **133 s** pro Mail. Ohne Denkmodus: Ø 3,1 s, 21/22 richtig (siehe Schritt 2). |
 | `localmail:latest` | Abbruch mit `LengthFinishReasonError`: 4096 Tokens erreicht, davon 3760 Ausgabe. Das Modelfile hat `TEMPLATE {{ .Prompt }}`, d. h. kein Chat-Template; System- und User-Rolle werden nicht als Chat formatiert. |
 | LangSmith | `LANGSMITH_TRACING=true` ohne Key, jeder Aufruf erzeugt `401 Unauthorized`-Meldungen |
 | Oberfläche | Engine-Dialog (lokal: Ollama/LM Studio mit Erkennung, oder Cloud-API) mit Fehleranzeige ist umgesetzt (`agent/llm.py`, `app/main.py`, `app/static/`) |
@@ -22,12 +22,15 @@ Ziel: LocalMail AI analysiert Mails vollständig lokal mit Ollama, und wir könn
 - [ ] LangSmith: entweder `LANGSMITH_API_KEY` eintragen oder `LANGSMITH_TRACING=false`.
 - **Fertig, wenn:** Das Dashboard nach dem Start mit «Lokal (Ollama)» grün «Bereit» zeigt und keine 401-Meldungen mehr im Log stehen.
 
-### 2. Thinking abschalten und messen
-- [ ] In `get_llm()` für Ollama das Denken abschalten. Zwei Varianten testen, weil noch nicht geprüft ist, welche Ollama über den OpenAI-kompatiblen Endpunkt (`/v1`) annimmt:
-  - `ChatOpenAI(..., reasoning_effort="none")`
-  - `ChatOpenAI(..., extra_body={"think": False})`
-- [ ] Für jede Variante prüfen: Kommt gültiges `EmailAnalysis`-JSON zurück, wie lange dauert eine Mail?
-- **Fertig, wenn:** Eine Variante funktioniert und die Zeit pro Mail deutlich unter den gemessenen 133 s liegt.
+### 2. Thinking abschalten und messen ✅ (15.11.2026)
+- [x] Zwei Varianten getestet (qwen3.5:4b, Testmail 1):
+  - `reasoning_effort="none"`: **4,8 s**, Ergebnis korrekt
+  - `extra_body={"think": False}`: 119,5 s, wirkt über `/v1` nicht
+- [x] `get_llm()` setzt für Ollama `reasoning_effort="none"`.
+- [x] Messung auf allen 22 Testmails, nacheinander: **21/22 Kategorien richtig, Termin ja/nein 22/22, Ø 3,1 s pro Mail (max. 5,6 s)**. Falsch: «Passwort läuft ab» (soll aufgabe, ist info).
+- [x] In der App (Testmodus, 4 parallel): 22/22 analysiert, 0 Fehler, gleiche Trefferquote, **168 s für alle 22**.
+- Befund für Schritt 5: Nacheinander wären es rund 68 s (22 × 3,1 s); 4 parallele Anfragen waren auf diesem Mac langsamer.
+- Ursache der früheren Fehler: Mit Denkmodus liefen 4 parallele Anfragen in den 300-s-Timeout (Ollama-Log: `500 | 5m0s`).
 
 ### 3. Kontextfenster prüfen
 - Der Abbruch bei `localmail:latest` lag bei 4096 Tokens. Prompt: 336 Tokens; Mailtext ist im Code auf 6000 Zeichen begrenzt (`MAX_BODY_CHARS`).
