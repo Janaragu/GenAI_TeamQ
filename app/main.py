@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from agent import inbox, store
+from agent import inbox, llm, store
 from agent.graph import resume_agent
 from agent.tools import call_tool
 from mcp_server.google_api import TOKEN_FILE
@@ -65,11 +65,95 @@ def status(testset: bool = False):
 @app.post("/api/sync")
 def sync(testset: bool = False):
     """Neue Mails holen und vom Agenten einsortieren lassen."""
+    engine = llm.engine_status()
+    if not engine.ready:
+        # Ohne funktionierende Engine würde jede Mail als fehlgeschlagen enden.
+        return {"new": 0, "failed": 0, "busy": False, "skipped": engine.problem}
     try:
         result = inbox.sync(testset)
     except Exception as error:
         raise HTTPException(502, f"Abruf fehlgeschlagen: {error}")
     return {"new": result.new, "failed": result.failed, "busy": result.busy}
+
+
+# -----------------------------------------------------------------------------
+# 2b. Engine: welches Sprachmodell analysiert (lokal oder Cloud)
+#     Ein hier gesetzter API-Key bleibt nur im Arbeitsspeicher dieses Prozesses.
+#     Er wird nie an den Browser zurückgeschickt, nicht gespeichert und nicht protokolliert.
+# -----------------------------------------------------------------------------
+def _engine_info() -> dict:
+    status = llm.engine_status()
+    config = status.config
+    cloud = config if config.provider == llm.CLOUD else llm.cloud_from_env()
+    local = {
+        provider: {
+            "name": llm.PROVIDER_NAMES[provider],
+            "url": llm.local_url(provider),
+            "running": models is not None,
+            "models": models or [],
+            "default_model": os.getenv(f"{provider.upper()}_MODEL", ""),
+        }
+        for provider, models in llm.detect_local().items()
+    }
+    return {
+        "provider": config.provider,
+        "name": config.name,
+        "model": config.model,
+        "is_local": config.is_local,
+        "ready": status.ready,
+        "problem": status.problem,
+        "local": local,
+        "cloud": {"base_url": cloud.base_url, "model": cloud.model, "has_key": bool(cloud.api_key)},
+    }
+
+
+class EngineChoice(BaseModel):
+    provider: str
+    model: str = ""
+    base_url: str = ""  # nur für Cloud
+    api_key: str = ""   # nur für Cloud; leer = bisherigen Key bzw. Key aus der .env behalten
+
+
+def _config_from(choice: EngineChoice) -> llm.EngineConfig:
+    if choice.provider in llm.LOCAL_PROVIDERS:
+        return llm.EngineConfig(choice.provider, llm.local_url(choice.provider), choice.model.strip())
+    if choice.provider != llm.CLOUD:
+        raise HTTPException(400, f"Unbekannter Anbieter: {choice.provider}")
+    current = llm.current_config()
+    fallback = current.api_key if current.provider == llm.CLOUD else llm.cloud_from_env().api_key
+    return llm.EngineConfig(
+        llm.CLOUD, choice.base_url.strip(), choice.model.strip(), choice.api_key.strip() or fallback
+    )
+
+
+@app.get("/api/engine")
+def get_engine():
+    """Gewählte Engine, ob sie bereit ist, und welche lokalen Server laufen."""
+    return _engine_info()
+
+
+@app.post("/api/engine")
+def set_engine(choice: EngineChoice):
+    config = _config_from(choice)
+    llm.set_config(config)
+    store.log("engine_gewechselt", details=f"{config.name}, {config.model}", source="app", actor="nutzer")
+    return _engine_info()
+
+
+@app.post("/api/engine/test")
+def test_engine(choice: EngineChoice):
+    """Verbindungstest: fragt nur die Modellliste ab, ruft kein Modell auf."""
+    config = _config_from(choice)
+    if not config.base_url:
+        return {"ok": False, "message": "Basis-URL fehlt."}
+    if config.provider == llm.CLOUD and not config.api_key:
+        return {"ok": False, "message": "API-Key fehlt."}
+    try:
+        models = llm.fetch_models(config.base_url, config.api_key, timeout=8)
+    except llm.ConnectionProblem as problem:
+        return {"ok": False, "message": str(problem)}
+    found = "Modell gefunden." if config.model in models else "Modell steht nicht in der Liste des Anbieters."
+    return {"ok": True, "message": f"Verbindung ok, {len(models)} Modelle verfügbar. {found}"}
 
 
 # -----------------------------------------------------------------------------
