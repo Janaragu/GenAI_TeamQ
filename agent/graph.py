@@ -1,214 +1,211 @@
-"""Der eigentliche Agent als LangGraph-Graph.
+"""Der Agent als LangGraph-Graph (aufgebaut wie im Notebook 05).
 
 Ablauf pro Mail:
 
-    analyze -> apply_label -> (hat Termin?) -> confirm_event -> (Ja?) -> create_event
-                                   | nein                          | nein
-                                  ENDE                            ENDE
+    START -> analyze -> apply_label -> (Termin gefunden?) -> confirm_event -> (Ja?) -> create_event -> END
+                                              | nein                              | nein
+                                             END                                 END
 
-Bei confirm_event hält der Graph an (interrupt) und wartet auf die Entscheidung
-des Nutzers in der Oberfläche. Erst danach wird weitergemacht.
+analyze        das LLM liest die Mail und füllt EmailAnalysis aus (strukturierte Ausgabe)
+apply_label    setzt das passende Gmail-Label über den MCP-Server
+confirm_event  hält an (interrupt, wie "escalate" im Notebook 08) und wartet auf Ja/Nein
+create_event   trägt den Termin über den MCP-Server in Google Kalender ein
+
+Ein Checkpointer (SQLite) merkt sich den Stand jeder Mail. So kann ein Terminvorschlag
+auch nach einem Neustart noch bestätigt werden.
 """
 
-import os
 import sqlite3
 from datetime import datetime, timedelta
-from functools import lru_cache
-from pathlib import Path
 
-from dotenv import load_dotenv
+from langchain.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
+from typing_extensions import TypedDict
 
-from agent import store
-from agent.llm import get_llm
+from agent import llm, store
 from agent.prompts import SYSTEM_PROMPT, USER_TEMPLATE
-from agent.state import AgentState
 from agent.tools import call_tool
-from schemas import AgentResult, AgentStatus, Category, Email, EmailAnalysis
-
-load_dotenv()
+from schemas import EmailAnalysis
 
 MAX_BODY_CHARS = 6000  # lange Mails werden gekürzt, damit der Prompt klein bleibt
 
 
 # -----------------------------------------------------------------------------
-# 1. Analyse: Mail ans LLM schicken, strukturierte Antwort (EmailAnalysis) holen.
-#    Keine Nebenwirkungen, deshalb nutzt auch die Evaluation diese Funktion.
+# 1. State: was der Graph von Knoten zu Knoten weiterreicht
+#    Nur einfache Werte (dict, str, bool), damit der Checkpointer sie speichern kann.
 # -----------------------------------------------------------------------------
-def analyze_email(email: Email) -> EmailAnalysis:
-    llm = get_llm().with_structured_output(EmailAnalysis)
-    user = USER_TEMPLATE.format(
-        received_at=email.received_at.isoformat() if email.received_at else "unbekannt",
-        sender=email.sender,
-        subject=email.subject,
-        body=email.body[:MAX_BODY_CHARS],
-    )
-    analysis = llm.invoke([("system", SYSTEM_PROMPT), ("user", user)])
+class AgentState(TypedDict, total=False):
+    email: dict           # die Mail: id, sender, subject, body, received_at
+    dry_run: bool         # True = Testmodus, nichts in Gmail oder den Kalender schreiben
+    analysis: dict        # Ergebnis des LLM (EmailAnalysis als dict)
+    label_applied: str    # gesetztes Gmail-Label
+    event_approved: bool  # Ja/Nein des Nutzers zum Terminvorschlag
+    event_link: str       # Link zum Kalendereintrag
 
-    if analysis.category is not Category.TERMIN:
-        analysis.event = None
+
+# -----------------------------------------------------------------------------
+# 2. Analyse: die Mail ans LLM schicken
+# -----------------------------------------------------------------------------
+def analyze_email(email):
+    """Schickt eine Mail ans LLM und gibt eine EmailAnalysis zurück.
+
+    Ohne Nebenwirkungen, deshalb nutzt auch die Evaluation (eval/metrics.py) diese Funktion.
+    """
+    # Bei jedem Aufruf neu bauen, weil die Engine in der Oberfläche umstellbar ist.
+    # method="json_schema": das Modell füllt das JSON-Schema von EmailAnalysis aus.
+    analyzer = llm.get_llm().with_structured_output(EmailAnalysis, method="json_schema")
+    mail_text = USER_TEMPLATE.format(
+        received_at=email.get("received_at") or "unbekannt",
+        sender=email["sender"],
+        subject=email["subject"],
+        body=email["body"][:MAX_BODY_CHARS],
+    )
+    analysis = analyzer.invoke([SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=mail_text)])
+
+    if analysis.category != "termin":
+        analysis.event = None  # nur Termin-Mails bekommen einen Terminvorschlag
     elif analysis.event:
-        # Uhrzeiten aus Mails sind Ortszeit. Das Modell hängt trotzdem oft "Z" (UTC) an.
-        event = analysis.event
-        event.start = event.start.replace(tzinfo=None)
-        event.end = event.end.replace(tzinfo=None) if event.end else None
+        # Uhrzeiten in Mails sind Ortszeit. Das Modell hängt trotzdem oft "Z" (UTC) an.
+        analysis.event.start = analysis.event.start.replace(tzinfo=None)
+        if analysis.event.end:
+            analysis.event.end = analysis.event.end.replace(tzinfo=None)
     return analysis
 
 
-# -----------------------------------------------------------------------------
-# 2. Protokoll-Helfer: Jeder Schritt schreibt einen Eintrag ins Protokoll.
-# -----------------------------------------------------------------------------
-def _source(dry_run: bool | None) -> str:
-    return "test" if dry_run else "gmail"
-
-
-def _log(state: AgentState, action: str, details: str, actor: str = "agent") -> None:
-    email = state["email"]
-    store.log(action, email["id"], email["subject"], details, _source(state.get("dry_run")), actor)
+def log(state, action, details, actor="agent"):
+    """Schreibt einen Eintrag ins Protokoll (Tabelle activity_log)."""
+    source = "test" if state.get("dry_run") else "gmail"
+    store.log(action, state["email"]["id"], state["email"]["subject"], details, source, actor)
 
 
 # -----------------------------------------------------------------------------
-# 3. Die Knoten (Schritte) des Graphen. Jeder bekommt den State und gibt nur
-#    die Felder zurück, die er ändert.
+# 3. Die Knoten. Jeder bekommt den State und gibt nur die Felder zurück, die er ändert.
 # -----------------------------------------------------------------------------
-def _analyze(state: AgentState) -> AgentState:
-    analysis = analyze_email(Email.model_validate(state["email"]))
-    _log(state, "analysiert", f"Kategorie {analysis.category.value}, Modell {get_llm().model_name}")
+def analyze(state: AgentState):
+    """Das LLM bestimmt Kategorie, Zusammenfassung und allenfalls einen Termin."""
+    analysis = analyze_email(state["email"])
+    log(state, "analysiert", f"Kategorie {analysis.category}, Modell {llm.engine['model']}")
     return {"analysis": analysis.model_dump(mode="json")}
 
 
-def _apply_label(state: AgentState) -> AgentState:
-    # Gmail-Label setzen (im Testlauf nur so tun als ob)
-    label = Category(state["analysis"]["category"]).label
+def apply_label(state: AgentState):
+    """Setzt das Gmail-Label der Kategorie, z. B. LocalMail/Spam. Im Testmodus nur so tun als ob."""
+    label = f"LocalMail/{state['analysis']['category'].capitalize()}"
     if not state.get("dry_run"):
         call_tool("apply_label", {"message_id": state["email"]["id"], "label_name": label})
-    _log(state, "zugeordnet", label)
+    log(state, "zugeordnet", label)
+
     event = state["analysis"].get("event")
     if event:
-        _log(state, "termin_vorgeschlagen", f"{event['title']}, {event['start']}")
+        log(state, "termin_vorgeschlagen", f"{event['title']}, {event['start']}")
     return {"label_applied": label}
 
 
-def _after_label(state: AgentState) -> str:
-    # Weiche: Nur Mails mit Termin gehen weiter zur Bestätigung.
-    return "confirm_event" if state["analysis"].get("event") else END
-
-
-def _confirm_event(state: AgentState) -> AgentState:
-    # Hier hält der Graph an. Die Oberfläche setzt später mit Ja/Nein fort.
-    # Beim Fortsetzen läuft der Knoten neu an, deshalb steht vor interrupt() nichts.
-    approved = interrupt({"event": state["analysis"]["event"]})
+def confirm_event(state: AgentState):
+    """Hält an, bis jemand in der Oberfläche Ja oder Nein zum Termin sagt."""
+    # Beim Fortsetzen läuft dieser Knoten von vorne, deshalb steht vor interrupt() nichts.
+    approved = interrupt({"event": state["analysis"]["event"]})  # hier hält der Graph an
     action = "termin_bestaetigt" if approved else "termin_verworfen"
-    _log(state, action, state["analysis"]["event"]["title"], actor="nutzer")
+    log(state, action, state["analysis"]["event"]["title"], actor="nutzer")
     return {"event_approved": bool(approved)}
 
 
-def _after_confirm(state: AgentState) -> str:
-    # Weiche: Nur bei Ja wird der Termin eingetragen.
-    return "create_event" if state.get("event_approved") else END
-
-
-def _create_event(state: AgentState) -> AgentState:
+def create_event(state: AgentState):
+    """Trägt den Termin in Google Kalender ein. Ohne Endzeit in der Mail: eine Stunde."""
     if state.get("dry_run"):
-        _log(state, "termin_eingetragen", "Testlauf, nichts in den Kalender geschrieben")
+        log(state, "termin_eingetragen", "Testlauf, nichts in den Kalender geschrieben")
         return {"event_link": "(Testlauf, nichts eingetragen)"}
-    # Ohne Ende in der Mail nehmen wir eine Stunde an.
+
     event = state["analysis"]["event"]
     start = datetime.fromisoformat(event["start"])
     end = datetime.fromisoformat(event["end"]) if event.get("end") else start + timedelta(hours=1)
-    created = call_tool(
-        "create_calendar_event",
-        {
-            "title": event["title"],
-            "start": start.isoformat(),
-            "end": end.isoformat(),
-            "location": event.get("location"),
-            "description": state["analysis"]["summary"],
-        },
-    )
-    _log(state, "termin_eingetragen", created.get("link", ""))
+    created = call_tool("create_calendar_event", {
+        "title": event["title"],
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "location": event.get("location"),
+        "description": state["analysis"]["summary"],
+    })
+    log(state, "termin_eingetragen", created.get("link", ""))
     return {"event_link": created.get("link")}
 
 
 # -----------------------------------------------------------------------------
-# 4. Graph zusammenbauen: Knoten und Pfeile verbinden, Speicher (SQLite) anhängen.
-#    lru_cache sorgt dafür, dass der Graph nur einmal gebaut wird.
+# 4. Weichen (bedingte Kanten)
 # -----------------------------------------------------------------------------
-@lru_cache(maxsize=1)
-def get_graph():
+def route_after_label(state: AgentState):
+    """Termin gefunden: weiter zu confirm_event. Sonst: fertig."""
+    if state["analysis"].get("event"):
+        return "confirm_event"
+    return END
+
+
+def route_after_confirm(state: AgentState):
+    """Ja: weiter zu create_event. Nein: fertig."""
+    if state.get("event_approved"):
+        return "create_event"
+    return END
+
+
+# -----------------------------------------------------------------------------
+# 5. Graph bauen
+# -----------------------------------------------------------------------------
+def build_graph(checkpointer=None):
     builder = StateGraph(AgentState)
-    builder.add_node("analyze", _analyze)
-    builder.add_node("apply_label", _apply_label)
-    builder.add_node("confirm_event", _confirm_event)
-    builder.add_node("create_event", _create_event)
+    builder.add_node("analyze", analyze)
+    builder.add_node("apply_label", apply_label)
+    builder.add_node("confirm_event", confirm_event)
+    builder.add_node("create_event", create_event)
+
     builder.add_edge(START, "analyze")
     builder.add_edge("analyze", "apply_label")
-    builder.add_conditional_edges("apply_label", _after_label, ["confirm_event", END])
-    builder.add_conditional_edges("confirm_event", _after_confirm, ["create_event", END])
+    builder.add_conditional_edges("apply_label", route_after_label, ["confirm_event", END])
+    builder.add_conditional_edges("confirm_event", route_after_confirm, ["create_event", END])
     builder.add_edge("create_event", END)
+    return builder.compile(checkpointer=checkpointer)
 
-    path = Path(os.getenv("SQLITE_PATH", "data/localmail.sqlite"))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path, check_same_thread=False)
-    return builder.compile(checkpointer=SqliteSaver(connection))
+
+# Wie InMemorySaver im Notebook 08, nur dauerhaft in SQLite.
+# check_same_thread=False: mehrere Mails werden gleichzeitig in eigenen Threads verarbeitet.
+checkpointer = SqliteSaver(sqlite3.connect(store.DB_PATH, check_same_thread=False))
+graph = build_graph(checkpointer)
 
 
 # -----------------------------------------------------------------------------
-# 5. Öffentliche Funktionen, die der Rest des Projekts benutzt.
-#    Jede Mail hat ihren eigenen "Thread" (Verlauf) im Speicher, Testmails
-#    bekommen das Präfix "dry-".
+# 6. Den Graphen benutzen (aufgerufen von agent/inbox.py und app/main.py)
+#    Jede Mail hat ihren eigenen Verlauf (thread_id), Testmails mit Präfix "dry-".
 # -----------------------------------------------------------------------------
-def _config(email_id: str, dry_run: bool) -> dict:
+def config_for(email_id, dry_run):
     prefix = "dry-" if dry_run else ""
-    return {"configurable": {"thread_id": f"{prefix}{email_id}"}}
+    return {"configurable": {"thread_id": prefix + email_id}}
 
 
-def _result(config: dict) -> AgentResult:
-    # Liest den gespeicherten Zustand und macht daraus ein AgentResult.
-    snapshot = get_graph().get_state(config)
-    values = snapshot.values
-    return AgentResult(
-        email_id=values["email"]["id"],
-        subject=values["email"]["subject"],
-        status=AgentStatus.AWAITING_CONFIRMATION if snapshot.next else AgentStatus.DONE,
-        analysis=EmailAnalysis.model_validate(values["analysis"]),
-        label_applied=values.get("label_applied"),
-        event_created=bool(values.get("event_link")),
-        event_link=values.get("event_link"),
-    )
+def status_of(config):
+    """'awaiting_confirmation', wenn der Graph beim Termin wartet, sonst 'done'."""
+    if graph.get_state(config).next:
+        return "awaiting_confirmation"
+    return "done"
 
 
-def run_agent(email: Email, dry_run: bool = False) -> AgentResult:
-    """Verarbeitet eine Mail. Bereits verarbeitete Mails liefern das gespeicherte Ergebnis."""
-    graph = get_graph()
-    config = _config(email.id, dry_run)
-    snapshot = graph.get_state(config)
-    already_handled = snapshot.values.get("label_applied") and (
-        not snapshot.next or snapshot.next == ("confirm_event",)
-    )
-    if not already_handled:
-        try:
-            graph.invoke({"email": email.model_dump(mode="json"), "dry_run": dry_run}, config)
-        except Exception as error:
-            store.log("fehler", email.id, email.subject, str(error)[:300], _source(dry_run))
-            raise
-    else:
-        store.log("uebernommen", email.id, email.subject, "Bereits früher verarbeitet", _source(dry_run))
-    result = _result(config)
-    store.save_result(email, result, _source(dry_run))
-    return result
-
-
-def resume_agent(email_id: str, approved: bool, dry_run: bool = False) -> AgentResult:
-    """Setzt nach der Ja/Nein-Entscheidung zu einem Terminvorschlag fort."""
-    config = _config(email_id, dry_run)
+def run_agent(email, dry_run=False):
+    """Lässt eine Mail durch den Graphen laufen und speichert das Ergebnis."""
+    config = config_for(email["id"], dry_run)
     try:
-        get_graph().invoke(Command(resume=approved), config)
+        graph.invoke({"email": email, "dry_run": dry_run}, config)
     except Exception as error:
-        store.log("fehler", email_id, details=str(error)[:300], source=_source(dry_run))
+        store.log("fehler", email["id"], email["subject"], str(error)[:300], "test" if dry_run else "gmail")
         raise
-    result = _result(config)
-    store.update_after_decision(result)
-    return result
+    store.save_analysis(email["id"], graph.get_state(config).values, status_of(config))
+
+
+def resume_agent(email_id, approved, dry_run=False):
+    """Setzt nach Ja/Nein zu einem Terminvorschlag fort (wie Command(resume=...) im Notebook 08)."""
+    config = config_for(email_id, dry_run)
+    try:
+        graph.invoke(Command(resume=approved), config)
+    except Exception as error:
+        store.log("fehler", email_id, details=str(error)[:300], source="test" if dry_run else "gmail")
+        raise
+    store.save_decision(email_id, status_of(config), graph.get_state(config).values.get("event_link"))

@@ -1,177 +1,145 @@
-"""Wählt und baut das Chat-Modell ("Engine").
+"""Wählt und baut das Sprachmodell, die "KI-Engine".
 
-Startwerte kommen aus der .env (LLM_BACKEND). Im Dashboard lässt sich die Engine zur Laufzeit
-umstellen. Diese Auswahl, auch ein dort eingegebener API-Key, liegt nur im Arbeitsspeicher
-des laufenden Prozesses: nichts davon wird in Dateien, die Datenbank oder das Protokoll geschrieben.
+Drei Möglichkeiten, alle über dieselbe OpenAI-kompatible Schnittstelle (ChatOpenAI):
+  cloud     Cloud-API mit Key, z. B. der FHNW-Proxy
+  ollama    lokaler Ollama-Server, kein Key nötig
+  lmstudio  lokaler LM-Studio-Server, kein Key nötig
+
+Der Startwert kommt aus der .env (LLM_BACKEND). In der Oberfläche lässt sich die
+Engine umstellen. Die Auswahl, auch ein dort eingegebener API-Key, steht nur in der
+Variable `engine` unten, also im Arbeitsspeicher: nichts davon wird gespeichert.
 """
 
-import json
 import os
-import threading
-import urllib.error
-import urllib.request
-from dataclasses import dataclass, field, replace
 
+import requests
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
 load_dotenv()
 
-CLOUD = "cloud"
-OLLAMA = "ollama"
-LMSTUDIO = "lmstudio"
-LOCAL_PROVIDERS = (OLLAMA, LMSTUDIO)
-PROVIDER_NAMES = {CLOUD: "Cloud-API", OLLAMA: "Ollama (lokal)", LMSTUDIO: "LM Studio (lokal)"}
-DEFAULT_URLS = {OLLAMA: "http://localhost:11434/v1", LMSTUDIO: "http://localhost:1234/v1"}
-
-# Lokale Server prüfen keinen Key, die OpenAI-Bibliothek verlangt aber einen nicht leeren Wert.
-LOCAL_PLACEHOLDER_KEY = "local"
+NAMES = {"cloud": "Cloud-API", "ollama": "Ollama (lokal)", "lmstudio": "LM Studio (lokal)"}
+LOCAL = ["ollama", "lmstudio"]
+DEFAULT_URLS = {"ollama": "http://localhost:11434/v1", "lmstudio": "http://localhost:1234/v1"}
 
 
-@dataclass(frozen=True)
-class EngineConfig:
-    provider: str
-    base_url: str
-    model: str
-    api_key: str = field(default="", repr=False)  # nie in Logs oder Fehlermeldungen ausgeben
-
-    @property
-    def name(self) -> str:
-        return PROVIDER_NAMES[self.provider]
-
-    @property
-    def is_local(self) -> bool:
-        return self.provider in LOCAL_PROVIDERS
-
-
-@dataclass
-class EngineStatus:
-    config: EngineConfig
-    ready: bool
-    problem: str = ""
-
-    @property
-    def name(self) -> str:
-        return self.config.name
-
-    @property
-    def model(self) -> str:
-        return self.config.model
-
-
-def local_url(provider: str) -> str:
+# -----------------------------------------------------------------------------
+# 1. Einstellungen aus der .env lesen
+# -----------------------------------------------------------------------------
+def local_url(provider):
+    """Adresse eines lokalen Servers: aus der .env, sonst der Standardport."""
     return os.getenv(f"{provider.upper()}_BASE_URL", DEFAULT_URLS[provider]).rstrip("/")
 
 
-def cloud_from_env() -> EngineConfig:
-    return EngineConfig(
-        CLOUD,
-        os.getenv("OPENAI_BASE_URL", "").rstrip("/"),
-        os.getenv("OPENAI_MODEL", ""),
-        os.getenv("OPENAI_API_KEY", ""),
-    )
+def cloud_from_env():
+    """Cloud-Einstellungen aus der .env."""
+    return {
+        "provider": "cloud",
+        "base_url": os.getenv("OPENAI_BASE_URL", "").rstrip("/"),
+        "model": os.getenv("OPENAI_MODEL", ""),
+        "api_key": os.getenv("OPENAI_API_KEY", ""),
+    }
 
 
-def _from_env() -> EngineConfig:
-    backend = os.getenv("LLM_BACKEND", CLOUD).lower()
-    if backend in ("proxy", CLOUD):
+def engine_from_env():
+    """Startwert der Engine, je nach LLM_BACKEND in der .env."""
+    backend = os.getenv("LLM_BACKEND", "cloud").lower()
+    if backend in ("cloud", "proxy"):  # "proxy" ist der alte Name für "cloud"
         return cloud_from_env()
-    if backend in LOCAL_PROVIDERS:
-        return EngineConfig(backend, local_url(backend), os.getenv(f"{backend.upper()}_MODEL", ""))
+    if backend in LOCAL:
+        model = os.getenv(f"{backend.upper()}_MODEL", "")
+        return {"provider": backend, "base_url": local_url(backend), "model": model, "api_key": ""}
     raise ValueError(f"Unbekanntes LLM_BACKEND: {backend!r} (erlaubt: cloud, proxy, ollama, lmstudio)")
 
 
-_lock = threading.Lock()
-_current: EngineConfig | None = None
+# Die gerade gewählte Engine. app/main.py ersetzt sie, wenn jemand im Dialog umstellt.
+# Immer als llm.engine lesen, nicht mit "from agent.llm import engine" kopieren,
+# sonst sieht man eine Umstellung nicht.
+engine = engine_from_env()
 
 
-def current_config() -> EngineConfig:
-    with _lock:
-        if _current is None:
-            return _from_env()
-        return _current
-
-
-def set_config(config: EngineConfig) -> None:
-    """Gilt sofort für alle folgenden Analysen dieses Prozesses, bis zum Neustart."""
-    global _current
-    if config.provider not in PROVIDER_NAMES:
-        raise ValueError(f"Unbekannter Anbieter: {config.provider!r}")
-    with _lock:
-        _current = replace(config, base_url=config.base_url.rstrip("/"))
-
-
+# -----------------------------------------------------------------------------
+# 2. Prüfen, ob ein Server erreichbar ist und welche Modelle er hat
+#    Fragt nur die Modellliste ab (/models), ruft also kein Modell auf.
+# -----------------------------------------------------------------------------
 class ConnectionProblem(Exception):
-    pass
+    """Server nicht erreichbar oder Zugriff verweigert. Der Text wird in der Oberfläche angezeigt."""
 
 
-def fetch_models(base_url: str, api_key: str = "", timeout: float = 3) -> list[str]:
-    """Fragt die OpenAI-kompatible Modellliste ab. Funktioniert für Ollama, LM Studio und viele Cloud-APIs."""
-    request = urllib.request.Request(f"{base_url.rstrip('/')}/models")
-    if api_key:
-        request.add_header("Authorization", f"Bearer {api_key}")
+def list_models(base_url, api_key="", timeout=3):
+    """Namen der Modelle, die ein OpenAI-kompatibler Server anbietet."""
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            data = json.load(response)
-    except urllib.error.HTTPError as error:
-        if error.code in (401, 403):
-            raise ConnectionProblem(f"Zugriff verweigert (HTTP {error.code}): API-Key prüfen.") from None
-        raise ConnectionProblem(f"Server antwortet mit HTTP {error.code}.") from None
-    except (OSError, ValueError):
+        response = requests.get(f"{base_url.rstrip('/')}/models", headers=headers, timeout=timeout)
+        if response.status_code in (401, 403):
+            raise ConnectionProblem(f"Zugriff verweigert (HTTP {response.status_code}): API-Key prüfen.")
+        if not response.ok:
+            raise ConnectionProblem(f"Server antwortet mit HTTP {response.status_code}.")
+        data = response.json()
+    except (requests.RequestException, ValueError):
         raise ConnectionProblem(f"Unter {base_url} ist kein Server erreichbar.") from None
     return [item["id"] for item in data.get("data", []) if "id" in item]
 
 
-def detect_local() -> dict[str, list[str] | None]:
-    """Welche lokalen Server laufen gerade? None = nicht erreichbar, sonst die geladenen Modelle."""
+def local_servers():
+    """Welche lokalen Server laufen? Pro Server die Modellliste, oder None, wenn er nicht antwortet."""
     found = {}
-    for provider in LOCAL_PROVIDERS:
+    for provider in LOCAL:
         try:
-            found[provider] = fetch_models(local_url(provider), timeout=1.5)
+            found[provider] = list_models(local_url(provider), timeout=1.5)
         except ConnectionProblem:
             found[provider] = None
     return found
 
 
-def engine_status() -> EngineStatus:
-    """Prüft, ob die gewählte Engine benutzbar ist, ohne ein Modell aufzurufen."""
-    config = current_config()
-    if config.provider == CLOUD:
+def engine_problem():
+    """Leerer Text, wenn die Engine benutzbar ist, sonst eine Erklärung, was fehlt."""
+    if engine["provider"] == "cloud":
         missing = [
             label
-            for label, value in (("Basis-URL", config.base_url), ("Modell", config.model), ("API-Key", config.api_key))
-            if not value
+            for label, key in (("Basis-URL", "base_url"), ("Modell", "model"), ("API-Key", "api_key"))
+            if not engine[key]
         ]
         if missing:
-            return EngineStatus(config, False, f"Es fehlt: {', '.join(missing)}. In den Engine-Einstellungen oder der .env eintragen.")
-        return EngineStatus(config, True)
+            return f"Es fehlt: {', '.join(missing)}. In den Engine-Einstellungen oder der .env eintragen."
+        return ""
 
+    name = NAMES[engine["provider"]].split(" ")[0]  # "Ollama" oder "LM"
     try:
-        models = fetch_models(config.base_url, timeout=1.5)
+        models = list_models(engine["base_url"], timeout=1.5)
     except ConnectionProblem as problem:
-        return EngineStatus(config, False, f"{problem} Läuft {config.name.split(' ')[0]}?")
-    if not config.model:
-        return EngineStatus(config, False, "Kein Modell gewählt.")
-    if config.model not in models:
-        return EngineStatus(config, False, f"Modell {config.model} ist auf diesem Server nicht verfügbar.")
-    return EngineStatus(config, True)
+        return f"{problem} Läuft {name}?"
+    if not engine["model"]:
+        return "Kein Modell gewählt."
+    if engine["model"] not in models:
+        return f"Modell {engine['model']} ist auf diesem Server nicht verfügbar."
+    return ""
 
 
-def get_llm() -> ChatOpenAI:
-    config = current_config()
-    if config.provider == CLOUD:
+# -----------------------------------------------------------------------------
+# 3. Das Modell bauen (wie im Notebook 04: ChatOpenAI mit model, base_url, api_key)
+# -----------------------------------------------------------------------------
+def get_llm():
+    if engine["provider"] == "cloud":
         # Keine temperature setzen: Die Reasoning-Modelle am FHNW-Proxy lehnen alles ausser 1 ab.
-        return ChatOpenAI(model=config.model, base_url=config.base_url, api_key=config.api_key, timeout=120)
+        return ChatOpenAI(
+            model=engine["model"],
+            base_url=engine["base_url"],
+            api_key=engine["api_key"],
+            timeout=120,
+        )
+
     extra = {}
-    if config.provider == OLLAMA:
+    if engine["provider"] == "ollama":
         # Denkmodus aus: Mit qwen3.5:4b dauerte eine Mail sonst ~120 s statt ~3 s, und vier
         # parallele Anfragen liefen in den Timeout. Gemessen am 15.11.2026 auf den 22 Testmails:
         # 21/22 Kategorien richtig. extra_body={"think": False} wirkte über /v1 nicht.
         extra["reasoning_effort"] = "none"
     return ChatOpenAI(
-        model=config.model,
-        base_url=config.base_url,
-        api_key=config.api_key or LOCAL_PLACEHOLDER_KEY,
+        model=engine["model"],
+        base_url=engine["base_url"],
+        # Lokale Server prüfen keinen Key, ChatOpenAI verlangt aber irgendeinen Wert.
+        api_key=engine["api_key"] or "local",
         temperature=0,
         timeout=300,
         **extra,

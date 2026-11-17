@@ -43,3 +43,6 @@ tzdata==2026.6
 # Oberfläche (Webserver)
 fastapi==0.162.1
 uvicorn==0.54.0
+
+# HTTP-Anfragen (Verbindungstest der KI-Engine)
+requests==2.34.2
