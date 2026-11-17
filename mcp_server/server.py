@@ -1,46 +1,161 @@
-"""MCP-Server: stellt Gmail und Google Kalender als Werkzeuge (Tools) bereit.
+"""Eigener MCP-Server mit Werkzeugen für Gmail und Google Kalender.
+
+Wie der eigene MCP-Server im Notebook 06: Jede Funktion mit @mcp.tool() ist ein
+Werkzeug. Ihr Docstring ist die Beschreibung, die der Client zu sehen bekommt.
 
 Start (macht agent/tools.py automatisch):  python -m mcp_server.server
-Jede Funktion mit @mcp.tool() ist ein Werkzeug. Der Docstring ist die
-Beschreibung, die ein Client (oder ein LLM) zu sehen bekommt.
+Die Anmeldung bei Google steht in token.json (einmalig: python -m mcp_server.auth).
 """
 
+import base64
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
 from mcp.server.fastmcp import FastMCP
 
-from mcp_server import google_api
+load_dotenv()
+
+# gmail.modify = Mails lesen und Labels setzen (nicht löschen), calendar.events = Termine
+DEFAULT_SCOPES = (
+    "https://www.googleapis.com/auth/gmail.modify,"
+    "https://www.googleapis.com/auth/calendar.events"
+)
+SCOPES = os.getenv("GOOGLE_SCOPES", DEFAULT_SCOPES).split(",")
+TOKEN_FILE = Path(os.getenv("GOOGLE_TOKEN_FILE", "token.json"))
+CREDENTIALS_FILE = Path(os.getenv("GOOGLE_CREDENTIALS_FILE", "credentials.json"))
+CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
+TIMEZONE = os.getenv("TIMEZONE", "Europe/Zurich")
 
 mcp = FastMCP("localmail")
 
 
 # -----------------------------------------------------------------------------
-# Gmail-Werkzeuge
+# 1. Anmeldung bei Google: Token laden und bei Bedarf automatisch erneuern
+# -----------------------------------------------------------------------------
+def credentials():
+    if not TOKEN_FILE.exists():
+        raise RuntimeError(f"{TOKEN_FILE} fehlt. Zuerst anmelden: python -m mcp_server.auth")
+    creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
+    if not creds.valid:
+        if not (creds.expired and creds.refresh_token):
+            raise RuntimeError("Google-Token ungültig. Neu anmelden: python -m mcp_server.auth")
+        creds.refresh(Request())
+        TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
+    return creds
+
+
+def gmail():
+    return build("gmail", "v1", credentials=credentials(), cache_discovery=False)
+
+
+def calendar():
+    return build("calendar", "v3", credentials=credentials(), cache_discovery=False)
+
+
+# -----------------------------------------------------------------------------
+# 2. Mailtext auslesen
+#    Gmail liefert eine Mail in verschachtelten Teilen (MIME), Base64-kodiert.
+#    Bevorzugt wird reiner Text, sonst HTML ohne Tags.
+# -----------------------------------------------------------------------------
+def find_part(payload, mime_type):
+    """Sucht in allen Teilen der Mail den ersten mit diesem Typ und gibt ihn als Text zurück."""
+    data = payload.get("body", {}).get("data")
+    if payload.get("mimeType") == mime_type and data:
+        return base64.urlsafe_b64decode(data + "===").decode("utf-8", errors="replace")
+    for part in payload.get("parts", []):
+        found = find_part(part, mime_type)
+        if found:
+            return found
+    return None
+
+
+def mail_body(payload):
+    text = find_part(payload, "text/plain")
+    if text:
+        return text
+    html = find_part(payload, "text/html")
+    if html:
+        return BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
+    return ""
+
+
+# -----------------------------------------------------------------------------
+# 3. Gmail-Werkzeuge
 # -----------------------------------------------------------------------------
 @mcp.tool()
 def list_email_ids(query: str = "in:inbox", max_results: int = 25) -> dict:
     """Liefert die IDs der neuesten Mails zu einer Gmail-Suchanfrage."""
-    return {"ids": google_api.list_ids(query, max_results)}
+    listing = gmail().users().messages().list(userId="me", q=query, maxResults=max_results).execute()
+    return {"ids": [ref["id"] for ref in listing.get("messages", [])]}
 
 
 @mcp.tool()
 def get_emails(ids: list[str]) -> dict:
     """Liefert Absender, Betreff, Text und Datum zu den angegebenen Mail-IDs."""
-    return {"emails": google_api.get_messages(ids)}
+    service = gmail()
+    emails = []
+    for message_id in ids:
+        message = service.users().messages().get(userId="me", id=message_id, format="full").execute()
+        headers = {h["name"].lower(): h["value"] for h in message["payload"].get("headers", [])}
+        # internalDate = Empfangszeit in Millisekunden seit 1970 (UTC)
+        received = datetime.fromtimestamp(int(message["internalDate"]) / 1000, tz=timezone.utc)
+        emails.append({
+            "id": message["id"],
+            "thread_id": message["threadId"],
+            "sender": headers.get("from", ""),
+            "subject": headers.get("subject", ""),
+            "body": mail_body(message["payload"]),
+            "received_at": received.isoformat(),
+        })
+    return {"emails": emails}
 
 
 @mcp.tool()
 def apply_label(message_id: str, label_name: str) -> dict:
     """Versieht eine Mail mit einem Label und legt es bei Bedarf an."""
-    google_api.apply_label(message_id, label_name)
+    service = gmail()
+    labels = service.users().labels().list(userId="me").execute().get("labels", [])
+    label_id = next((label["id"] for label in labels if label["name"] == label_name), None)
+    if label_id is None:  # Label gibt es noch nicht: anlegen
+        label_id = service.users().labels().create(userId="me", body={"name": label_name}).execute()["id"]
+    service.users().messages().modify(userId="me", id=message_id, body={"addLabelIds": [label_id]}).execute()
     return {"ok": True}
 
 
 # -----------------------------------------------------------------------------
-# Kalender-Werkzeuge
+# 4. Kalender-Werkzeuge
 # -----------------------------------------------------------------------------
 @mcp.tool()
 def list_calendar_events(time_min: str, time_max: str, max_results: int = 50) -> dict:
     """Liefert die Termine im Zeitraum (ISO-8601 mit Zeitzone)."""
-    return {"events": google_api.list_events(time_min, time_max, max_results)}
+    response = calendar().events().list(
+        calendarId=CALENDAR_ID,
+        timeMin=time_min,
+        timeMax=time_max,
+        singleEvents=True,  # Serientermine einzeln auflisten
+        orderBy="startTime",
+        maxResults=max_results,
+    ).execute()
+
+    events = []
+    for item in response.get("items", []):
+        start, end = item.get("start", {}), item.get("end", {})
+        events.append({
+            "title": item.get("summary", "(ohne Titel)"),
+            # Ganztägige Termine haben nur "date", alle anderen "dateTime".
+            "start": start.get("dateTime", start.get("date")),
+            "end": end.get("dateTime", end.get("date")),
+            "all_day": "date" in start,
+            "location": item.get("location"),
+            "link": item.get("htmlLink"),
+        })
+    return {"events": events}
 
 
 @mcp.tool()
@@ -48,7 +163,17 @@ def create_calendar_event(
     title: str, start: str, end: str, location: str | None = None, description: str | None = None
 ) -> dict:
     """Trägt einen Termin ein. start und end sind ISO-8601 in Ortszeit."""
-    return {"link": google_api.create_event(title, start, end, location, description)}
+    body = {
+        "summary": title,
+        "start": {"dateTime": start, "timeZone": TIMEZONE},
+        "end": {"dateTime": end, "timeZone": TIMEZONE},
+    }
+    if location:
+        body["location"] = location
+    if description:
+        body["description"] = description
+    event = calendar().events().insert(calendarId=CALENDAR_ID, body=body).execute()
+    return {"link": event.get("htmlLink", "")}
 
 
 # -----------------------------------------------------------------------------

@@ -1,49 +1,44 @@
-"""Brücke vom Agenten zum MCP-Server.
+"""Verbindung zum eigenen MCP-Server (mcp_server/server.py).
 
-Der Agent spricht Gmail und den Kalender nie direkt an, sondern ruft Werkzeuge
-(Tools) des MCP-Servers auf (mcp_server/server.py). Für jeden Aufruf wird der
-Server kurz als eigener Prozess gestartet und über stdin/stdout angesprochen.
+Wie im Notebook 06: MultiServerMCPClient startet den Server als eigenen Prozess
+und spricht über stdin/stdout mit ihm (transport "stdio"). Der Agent greift nie
+direkt auf Gmail oder den Kalender zu, sondern immer über diese Werkzeuge.
 """
 
 import asyncio
 import json
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+from langchain_mcp_adapters.client import MultiServerMCPClient
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent  # Hauptordner des Projekts
+
+client = MultiServerMCPClient({
+    "localmail": {
+        "command": sys.executable,             # derselbe Python wie diese App
+        "args": ["-m", "mcp_server.server"],
+        "transport": "stdio",                  # Kommunikation über die Standardeingabe
+        "cwd": str(ROOT),                      # damit der Server .env und token.json findet
+        "env": dict(os.environ),               # gleiche Umgebungsvariablen wie die App
+    }
+})
 
 
-# -----------------------------------------------------------------------------
-# 1. Asynchroner Aufruf: Server starten, verbinden, Tool aufrufen, Antwort lesen.
-# -----------------------------------------------------------------------------
-async def _call(name: str, arguments: dict) -> dict:
-    params = StdioServerParameters(
-        command=sys.executable,
-        args=["-m", "mcp_server.server"],
-        cwd=str(ROOT),
-        env=dict(os.environ),
-    )
-    async with stdio_client(params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            result = await session.call_tool(name, arguments)
-
+async def call_tool_async(name, arguments):
+    """Startet den Server, ruft ein Werkzeug auf und gibt dessen Antwort als dict zurück."""
+    async with client.session("localmail") as session:
+        result = await session.call_tool(name, arguments)
     text = "".join(getattr(part, "text", "") for part in result.content)
     if result.isError:
         raise RuntimeError(f"MCP-Werkzeug {name} fehlgeschlagen: {text}")
-    # FastMCP liefert Rückgaben vom Typ dict als JSON-Text, nicht als structuredContent.
-    return result.structuredContent or (json.loads(text) if text else {})
+    return json.loads(text) if text else {}
 
 
-# -----------------------------------------------------------------------------
-# 2. Synchrone Hülle: So kann der restliche (normale) Code einfach call_tool()
-#    aufrufen. Der eigene Thread sorgt dafür, dass es auch in Notebooks geht.
-# -----------------------------------------------------------------------------
-def call_tool(name: str, arguments: dict) -> dict:
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(lambda: asyncio.run(_call(name, arguments))).result()
+def call_tool(name, arguments):
+    """Dasselbe für normalen (nicht asynchronen) Code, z. B. call_tool("apply_label", {...}).
+
+    In einem Notebook stattdessen: await call_tool_async(...)
+    """
+    return asyncio.run(call_tool_async(name, arguments))

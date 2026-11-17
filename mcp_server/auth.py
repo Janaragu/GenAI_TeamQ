@@ -7,10 +7,10 @@ Ausgabe (stdout) für das MCP-Protokoll reserviert ist.
 
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-from mcp_server.google_api import CREDENTIALS_FILE, SCOPES, TOKEN_FILE
+from mcp_server.server import CREDENTIALS_FILE, SCOPES, TOKEN_FILE
 
 
-def main() -> None:
+def main():
     # credentials.json = OAuth-Client aus der Google Cloud Console
     if not CREDENTIALS_FILE.exists():
         raise SystemExit(f"{CREDENTIALS_FILE} fehlt (OAuth-Client aus der Google Cloud Console).")

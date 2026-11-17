@@ -7,14 +7,20 @@ und Termine nach Bestätigung in Google Calendar einträgt.
 
 | Ordner / Datei | Inhalt | Rolle |
 | --- | --- | --- |
-| `agent/` | LangGraph-Graph, State, Prompts, `run_agent()` | Agent & LLM |
-| `mcp_server/` | MCP-Server mit Gmail- und Kalender-Werkzeugen | API & MCP |
+| `agent/graph.py` | Der Agent: State, Knoten, Weichen, `build_graph()`, `run_agent()` (Aufbau wie Notebook 05) | Agent & LLM |
+| `agent/prompts.py` | System-Prompt und Vorlage für die Mail | Agent & LLM |
+| `agent/llm.py` | KI-Engine wählen: Cloud-API, Ollama oder LM Studio | Agent & LLM |
+| `agent/tools.py` | Verbindung zum MCP-Server mit `MultiServerMCPClient` (wie Notebook 06) | API & MCP |
+| `agent/inbox.py` | Mails abrufen und automatisch einsortieren lassen | Agent & LLM |
+| `agent/store.py` | SQLite: Mails und Protokoll speichern und lesen | alle |
+| `mcp_server/server.py` | Eigener MCP-Server mit Gmail- und Kalender-Werkzeugen (wie Notebook 06) | API & MCP |
+| `mcp_server/auth.py` | Einmalige Google-Anmeldung | API & MCP |
 | `app/` | Postfach-Oberfläche im Gmail-Stil: FastAPI-Server (`main.py`) und Seite in `static/` | UI |
 | `eval/` | System A (Regeln), Metriken-Skript | Evaluation & Daten |
 | `eval/data/` | Testset `testmails.json` mit Soll-Werten (wird committet) | Evaluation & Daten |
 | `data/` | SQLite, Checkpoints – lokal, **nicht** im Repo | alle |
 | `notebooks/` | Experimente, z.B. Ollama-Tests | alle |
-| `schemas.py` | gemeinsame Pydantic-Schemas (Schnittstelle zwischen allen Teilen) | alle |
+| `schemas.py` | Was das LLM zurückgeben muss (strukturierte Ausgabe, wie Notebook 05) | alle |
 
 ## Setup
 
