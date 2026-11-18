@@ -9,6 +9,7 @@ Die Anmeldung bei Google steht in token.json (einmalig: python -m mcp_server.aut
 
 import base64
 import os
+import socket
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,6 +21,18 @@ from googleapiclient.discovery import build
 from mcp.server.fastmcp import FastMCP
 
 load_dotenv()
+
+# In manchen Netzen ist Google über IPv6 nicht erreichbar. Python versucht IPv6
+# zuerst, und der Gmail-Abruf bricht mit "timed out" ab, statt auf IPv4 auszuweichen.
+# GOOGLE_FORCE_IPV4=1 in .env: nur IPv4-Adressen verwenden (wenn es welche gibt).
+if os.getenv("GOOGLE_FORCE_IPV4", "").lower() in ("1", "true", "yes"):
+    _getaddrinfo = socket.getaddrinfo
+
+    def _ipv4_only(*args, **kwargs):
+        results = _getaddrinfo(*args, **kwargs)
+        return [r for r in results if r[0] == socket.AF_INET] or results
+
+    socket.getaddrinfo = _ipv4_only
 
 # gmail.modify = Mails lesen und Labels setzen (nicht löschen), calendar.events = Termine
 DEFAULT_SCOPES = (
