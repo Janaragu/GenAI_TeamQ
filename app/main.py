@@ -21,9 +21,9 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from agent import inbox, llm, store
+from agent import chat, inbox, llm, reply, store
 from agent.graph import resume_agent
 from agent.tools import call_tool
 
@@ -234,7 +234,78 @@ def decide(email_id: str, decision: Decision):
 
 
 # -----------------------------------------------------------------------------
-# 6. Google Kalender: Termine der nächsten Tage für die Seitenleiste rechts
+# 6. Antworten: KI-Entwurf holen, danach selbst senden
+#    Der Entwurf wird nur angezeigt. Gesendet wird erst, wenn der Nutzer "Senden" drückt.
+# -----------------------------------------------------------------------------
+class DraftRequest(BaseModel):
+    instruction: str  # z. B. "Termin annehmen" oder "Lehne freundlich ab"
+
+
+class SendRequest(BaseModel):
+    body: str  # der fertige Antworttext aus dem Antwortfeld
+
+
+def mail_or_404(email_id):
+    mail = store.get_email(email_id)
+    if not mail:
+        raise HTTPException(404, "Mail nicht gefunden")
+    return mail
+
+
+@app.post("/api/mails/{email_id}/reply/draft")
+def draft_reply(email_id: str, request: DraftRequest):
+    """Lässt das LLM einen Antworttext schreiben. Sendet nichts."""
+    mail = mail_or_404(email_id)
+    problem = llm.engine_problem()
+    if problem:
+        raise HTTPException(409, f"KI-Engine nicht bereit: {problem}")
+    try:
+        return {"body": reply.draft_reply(mail, request.instruction.strip())}
+    except Exception as error:
+        raise HTTPException(502, f"Entwurf fehlgeschlagen: {error}")
+
+
+@app.post("/api/mails/{email_id}/reply/send")
+def send_reply(email_id: str, request: SendRequest):
+    """Sendet die Antwort über Gmail (im Testmodus nur ins Protokoll)."""
+    mail = mail_or_404(email_id)
+    if not request.body.strip():
+        raise HTTPException(400, "Die Antwort ist leer.")
+    try:
+        return reply.send_reply(mail, request.body)
+    except Exception as error:
+        raise HTTPException(502, f"Senden fehlgeschlagen: {error}")
+
+
+# -----------------------------------------------------------------------------
+# 7. Chatfenster: Fragen zu den eigenen Mails (Guardrails in agent/chat.py)
+# -----------------------------------------------------------------------------
+class ChatMessage(BaseModel):
+    role: str   # "user" oder "assistant"
+    text: str = Field(max_length=4000)
+
+
+class ChatRequest(BaseModel):
+    # max_length ist eine Guardrail: zu lange Fragen lehnt FastAPI direkt ab (Fehler 422).
+    question: str = Field(min_length=1, max_length=chat.MAX_QUESTION_CHARS)
+    history: list[ChatMessage] = []
+
+
+@app.post("/api/chat")
+def ask_chat(request: ChatRequest, testset: bool = False):
+    """Beantwortet eine Frage zu den Mails. Kann einen Antwort-Entwurf mitliefern, sendet aber nie."""
+    problem = llm.engine_problem()
+    if problem:
+        raise HTTPException(409, f"KI-Engine nicht bereit: {problem}")
+    history = [message.model_dump() for message in request.history]
+    try:
+        return chat.ask(request.question.strip(), history, inbox.source_name(testset))
+    except Exception as error:
+        raise HTTPException(502, f"Chat fehlgeschlagen: {error}")
+
+
+# -----------------------------------------------------------------------------
+# 8. Google Kalender: Termine der nächsten Tage für die Seitenleiste rechts
 # -----------------------------------------------------------------------------
 @app.get("/api/calendar")
 def calendar(testset: bool = False, days: int = 14):
@@ -255,7 +326,24 @@ def calendar(testset: bool = False, days: int = 14):
 
 
 # -----------------------------------------------------------------------------
-# 7. Protokoll anzeigen und als Markdown herunterladen
+# 9. Alles zurücksetzen (z. B. vor einer Demo)
+# -----------------------------------------------------------------------------
+@app.post("/api/reset")
+def reset():
+    """Löscht Mails, Protokoll und Agenten-Stand in der lokalen Datenbank. Gmail bleibt, wie es ist."""
+    # Nicht mitten in einen Abruf hinein löschen: dieselbe Sperre wie in agent/inbox.py.
+    if not inbox.lock.acquire(blocking=False):
+        raise HTTPException(409, "Gerade läuft ein Abruf. Bitte kurz warten und nochmals versuchen.")
+    try:
+        store.reset_all()
+        store.log("zurückgesetzt", details="Alle Mails und das Protokoll gelöscht", source="app", actor="nutzer")
+    finally:
+        inbox.lock.release()
+    return {"ok": True}
+
+
+# -----------------------------------------------------------------------------
+# 10. Protokoll anzeigen und als Markdown herunterladen
 # -----------------------------------------------------------------------------
 @app.get("/api/log")
 def log():
@@ -269,7 +357,7 @@ def export_log():
 
 
 # -----------------------------------------------------------------------------
-# 8. Start
+# 11. Start
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "7860"))

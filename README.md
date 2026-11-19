@@ -8,12 +8,14 @@ und Termine nach Bestätigung in Google Calendar einträgt.
 | Ordner / Datei | Inhalt | Rolle |
 | --- | --- | --- |
 | `agent/graph.py` | Der Agent: State, Knoten, Weichen, `build_graph()`, `run_agent()` (Aufbau wie Notebook 05) | Agent & LLM |
-| `agent/prompts.py` | System-Prompt und Vorlage für die Mail | Agent & LLM |
+| `agent/prompts.py` | System-Prompt und Vorlage für die Mail, Prompts für Antwort-Entwürfe und Chat | Agent & LLM |
+| `agent/reply.py` | Antworten: KI-Entwurf schreiben lassen, Senden erst auf Knopfdruck | Agent & LLM |
+| `agent/chat.py` | Chatfenster: Fragen zu den eigenen Mails, mit Guardrails, kann Antwort-Entwürfe anstossen | Agent & LLM |
 | `agent/llm.py` | KI-Engine wählen: Cloud-API, Ollama oder LM Studio | Agent & LLM |
 | `agent/tools.py` | Verbindung zum MCP-Server mit `MultiServerMCPClient` (wie Notebook 06) | API & MCP |
 | `agent/inbox.py` | Mails abrufen und automatisch einsortieren lassen | Agent & LLM |
 | `agent/store.py` | SQLite: Mails und Protokoll speichern und lesen | alle |
-| `mcp_server/server.py` | Eigener MCP-Server mit Gmail- und Kalender-Werkzeugen (wie Notebook 06) | API & MCP |
+| `mcp_server/server.py` | Eigener MCP-Server mit Gmail- und Kalender-Werkzeugen, auch Antworten senden (wie Notebook 06) | API & MCP |
 | `mcp_server/auth.py` | Einmalige Google-Anmeldung | API & MCP |
 | `app/` | Postfach-Oberfläche im Gmail-Stil: FastAPI-Server (`main.py`) und Seite in `static/` | UI |
 | `eval/` | System A (Regeln), Metriken-Skript | Evaluation & Daten |
@@ -35,12 +37,22 @@ cp .env.example .env            # Keys eintragen
 
 ## Starten
 
+**Schnellstart mit einem Befehl** (startet LM Studio, falls installiert, öffnet den Browser und startet die App):
+
+```bash
+./start.sh        # macOS/Linux
+start.bat         # Windows (LM Studio bzw. Ollama vorher selbst starten)
+```
+
+Oder von Hand:
+
 Immer aus dem Hauptverzeichnis und als Modul, damit `from agent... import ...` und `from schemas import ...` funktionieren:
 
 ```bash
 python -m app.main              # Dashboard
 python -m eval.metrics          # System A (Regeln) gegen System B (LLM)
 python -m eval.metrics --only-a # nur Regeln, ohne LLM-Aufrufe
+python -m eval.benchmark --backend ollama --model qwen3.5:4b   # Fehlerquote und Zeit eines lokalen Modells
 ```
 
 Für echte Mails einmalig im Browser anmelden:
@@ -73,6 +85,7 @@ Ist die Engine nicht bereit (kein Key, Server aus, Modell fehlt), erscheint ein 
 - `data/localmail.sqlite` enthält die Tabellen `emails` (Mails samt Zuordnung) und `activity_log` (jede Aktion mit Zeit, Quelle und Akteur).
 - Die Ansicht «Protokoll» zeigt den Verlauf und bietet ihn als Markdown zum Herunterladen an, abgelegt unter `data/protokoll.md`.
 - Mail-Inhalte gehen zur Analyse an das eingestellte LLM-Backend.
+- Zahnrad → «Alles zurücksetzen» löscht Mails, Analysen, Protokoll und Chat in der lokalen Datenbank und ruft danach alles neu ab (z. B. vor einer Demo). Gmail-Labels und Kalendereinträge bleiben bestehen; einen schon eingetragenen Termin nach dem Zurücksetzen nicht nochmals bestätigen, sonst steht er doppelt im Kalender.
 
 ## Bekannte Stolpersteine
 
