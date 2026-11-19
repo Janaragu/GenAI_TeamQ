@@ -24,12 +24,22 @@ const CHIP_TEXT = {
 };
 const SYNC_INTERVAL_MS = 60 * 1000; // automatischer Abruf jede Minute
 
+// Antwort-Vorschläge (Knöpfe) pro Kategorie. Der Knopftext ist zugleich die
+// Anweisung an die KI. Newsletter und Spam beantwortet man nicht, also keine Knöpfe.
+const REPLY_SUGGESTIONS = {
+  termin: ["Termin annehmen", "Termin ablehnen", "Anderen Termin vorschlagen"],
+  aufgabe: ["Zusagen, dass ich mich darum kümmere", "Rückfrage stellen", "Freundlich ablehnen"],
+  info: ["Kurz bedanken"],
+};
+
 const state = {
   box: "inbox",        // gewählter Ordner
   search: "",          // aktueller Suchbegriff
   testset: false,      // true = Testmails statt Gmail
   openId: null,        // ID der geöffneten Mail
   calendarOpen: false, // Kalender rechts sichtbar?
+  chatOpen: false,     // Chat rechts sichtbar?
+  chat: [],            // Chatverlauf: [{ role: "user" | "assistant", text }], nur im Browser
   engine: null,        // Antwort von /api/engine
 };
 
@@ -158,7 +168,6 @@ async function refreshNav() {
 function selectBox(key) {
   state.box = key;
   state.openId = null;
-  $("#sidebar").classList.remove("open");
   if (key === "log") loadLog();
   else loadList();
   refreshNav();
@@ -236,6 +245,79 @@ function eventCard(mail) {
   return card;
 }
 
+// Antwort-Bereich unter der Mail (wie "Antworten" in Gmail):
+// Vorschlag-Knöpfe und eigene Anweisung lassen die KI einen Entwurf schreiben.
+// Der Entwurf landet im Textfeld. Gesendet wird erst mit dem Knopf "Senden".
+function replyCard(mail) {
+  const text = el("textarea", { class: "reply-text", id: "reply-text", rows: "8", placeholder: "Antwort schreiben…" });
+  const instruction = el("input", {
+    class: "reply-instruction", type: "text", autocomplete: "off",
+    placeholder: "Anweisung an die KI, z. B. Lehne freundlich und professionell ab",
+  });
+  const status = el("span", { class: "reply-status" });
+
+  // Alle Knöpfe und Felder sperren, solange die KI schreibt oder gesendet wird.
+  const setBusy = (busy, message = "") => {
+    card.querySelectorAll("button, input, textarea").forEach((node) => (node.disabled = busy));
+    status.textContent = message;
+  };
+
+  async function draft(prompt) {
+    if (!prompt.trim()) return;
+    setBusy(true, "KI schreibt einen Entwurf…");
+    try {
+      const data = await api(`/api/mails/${encodeURIComponent(mail.id)}/reply/draft`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instruction: prompt }),
+      });
+      text.value = data.body;  // ersetzt den bisherigen Text im Antwortfeld
+      setBusy(false, "Entwurf bereit: prüfen, anpassen, dann senden.");
+      text.focus();
+    } catch (error) {
+      setBusy(false);
+      toast(error.message);
+    }
+  }
+
+  async function send() {
+    if (!text.value.trim()) return toast("Die Antwort ist leer.");
+    setBusy(true, "Wird gesendet…");
+    try {
+      const result = await api(`/api/mails/${encodeURIComponent(mail.id)}/reply/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: text.value }),
+      });
+      text.value = "";
+      setBusy(false, result.sent ? "Gesendet." : "Testlauf: nur protokolliert, nicht gesendet.");
+      toast(result.sent ? "Antwort gesendet." : "Testlauf: Antwort nicht gesendet.");
+    } catch (error) {
+      setBusy(false);
+      toast(error.message);
+    }
+  }
+
+  const suggestions = (REPLY_SUGGESTIONS[mail.category] || []).map((label) =>
+    el("button", { class: "suggestion", type: "button", text: label, onclick: () => draft(label) }));
+
+  const card = el("div", { class: "card reply" },
+    el("div", { class: "card-title" }, icon("reply"), el("span", { text: "Antworten" })),
+    suggestions.length ? el("div", { class: "suggestions" }, icon("auto_awesome"), ...suggestions) : null,
+    el("form", { class: "reply-ask", onsubmit: (event) => { event.preventDefault(); draft(instruction.value); } },
+      instruction,
+      el("button", { class: "btn", type: "submit" }, "Entwurf"),
+    ),
+    text,
+    el("div", { class: "actions" },
+      el("button", { class: "btn filled", type: "button", text: "Senden", onclick: send }),
+      el("button", { class: "btn", type: "button", text: "Leeren", onclick: () => { text.value = ""; status.textContent = ""; } }),
+      status,
+    ),
+  );
+  return card;
+}
+
 function renderMail(mail) {
   const sender = parseSender(mail.sender);
   const avatar = el("div", { class: "avatar", text: (sender.name.trim()[0] || "?").toUpperCase() });
@@ -262,6 +344,7 @@ function renderMail(mail) {
     ),
     eventCard(mail),
     el("div", { class: "body", text: mail.body || "" }),
+    replyCard(mail),
   ].filter(Boolean));
 }
 
@@ -365,10 +448,91 @@ async function loadCalendar() {
 }
 
 function toggleCalendar(open) {
+  if (open && state.chatOpen) toggleChat(false);  // rechts ist nur Platz für ein Fenster
   state.calendarOpen = open;
   $("#calendar-panel").hidden = !open;
   $("#calendar-btn").classList.toggle("active", open);
   if (open) loadCalendar();
+}
+
+// ----- 7b. Chat mit der KI über die eigenen Mails (rechts, wie Gemini in Gmail) -----
+// Beispielfragen, die vor der ersten Frage als Knöpfe erscheinen.
+const CHAT_EXAMPLES = [
+  "Was sind meine To-dos heute?",
+  "Welche Mails habe ich in den letzten 5 Tagen bekommen?",
+  "Gibt es Termine, die ich noch bestätigen muss?",
+];
+
+// Eine Nachricht im Verlauf. Text immer als textContent, nie als HTML.
+function chatBubble(role, text, ...extra) {
+  return el("div", { class: `bubble ${role}` }, el("div", { text }), ...extra);
+}
+
+// Entwurf aus dem Chat: Knopf öffnet die Mail und füllt das Antwortfeld.
+// Gesendet wird erst dort mit "Senden".
+function draftBox(draft) {
+  async function open() {
+    await openMail(draft.mail_id);
+    const text = $("#reply-text");
+    if (!text) return;
+    text.value = draft.body;
+    text.scrollIntoView({ behavior: "smooth", block: "center" });
+    text.focus();
+  }
+  return el("div", { class: "chat-draft" },
+    el("div", { class: "chat-draft-title", text: `Entwurf: Re: ${draft.subject}` }),
+    el("div", { class: "chat-draft-body", text: draft.body }),
+    el("button", { class: "btn small-primary", type: "button", text: "In Mail öffnen", onclick: open }),
+  );
+}
+
+function renderChat() {
+  const log = $("#chat-log");
+  if (!state.chat.length) {
+    log.replaceChildren(
+      el("p", { class: "panel-sub", text: "Frag mich etwas zu deinen Mails. Ich kann auch Antworten entwerfen, z. B. „Antworte Anna, dass ich komme“." }),
+      ...CHAT_EXAMPLES.map((example) =>
+        el("button", { class: "suggestion", type: "button", text: example, onclick: () => askChat(example) })),
+    );
+    return;
+  }
+  log.replaceChildren(...state.chat.map((m) => chatBubble(m.role, m.text, m.draft ? draftBox(m.draft) : null)));
+  log.scrollTop = log.scrollHeight;  // zur neuesten Nachricht
+}
+
+async function askChat(question) {
+  question = question.trim();
+  if (!question) return;
+  const history = state.chat.map((m) => ({ role: m.role, text: m.text }));  // ohne Entwürfe
+  state.chat.push({ role: "user", text: question });
+  renderChat();
+  $("#chat-log").append(el("div", { class: "bubble assistant pending-note", text: "Denkt nach…" }));
+  $("#chat-input").value = "";
+  $("#chat-input").disabled = true;
+  try {
+    const data = await api("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, history }),
+    });
+    state.chat.push({ role: "assistant", text: data.answer, draft: data.draft });
+  } catch (error) {
+    state.chat.push({ role: "assistant", text: `Fehler: ${error.message}` });
+  }
+  $("#chat-input").disabled = false;
+  $("#chat-input").focus();
+  renderChat();
+}
+
+function toggleChat(open) {
+  if (open && state.calendarOpen) toggleCalendar(false);  // rechts ist nur Platz für ein Fenster
+  state.chatOpen = open;
+  $("#chat-panel").hidden = !open;
+  $("#chat-btn").classList.toggle("active", open);
+  if (open) {
+    renderChat();
+    $("#chat-input").focus();
+  }
 }
 
 // ----- 8. Automatischer Abruf neuer Mails -----
@@ -400,6 +564,30 @@ async function sync() {
   } finally {
     button.classList.remove("busy");
   }
+}
+
+// ----- 8b. Alles zurücksetzen (z. B. vor einer Demo) -----
+// Löscht Mails, Protokoll und Chat in LocalMail und holt danach alles neu.
+// Gmail und Google Kalender bleiben, wie sie sind.
+async function resetAll() {
+  $("#settings-menu").hidden = true;
+  const ok = confirm(
+    "Alles zurücksetzen?\n\n" +
+    "Gelöscht werden in LocalMail: alle Mails, Analysen, Terminvorschläge, das Protokoll und der Chat.\n" +
+    "Danach werden die Mails neu abgerufen und neu analysiert.\n\n" +
+    "Gmail und Google Kalender werden nicht verändert.",
+  );
+  if (!ok) return;
+  try {
+    await api("/api/reset", { method: "POST" });
+  } catch (error) {
+    return toast(error.message);
+  }
+  state.chat = [];
+  if (state.chatOpen) renderChat();
+  selectBox("inbox");
+  toast("Zurückgesetzt. Mails werden neu abgerufen…");
+  sync();
 }
 
 // ----- 9. Testmodus umschalten (wird im Browser gemerkt) -----
@@ -600,17 +788,33 @@ function bindEngine() {
 
 // ----- 10. Start: Knöpfe verbinden, Modus wählen, ersten Abruf starten -----
 async function init() {
-  $("#menu-btn").addEventListener("click", () => {
-    if (window.matchMedia("(max-width: 860px)").matches) $("#sidebar").classList.toggle("open");
-    else $("#sidebar").classList.toggle("collapsed");
-  });
+  // Hauptmenü-Knopf klappt die linke Leiste auf Symbole zusammen (wie in Gmail).
+  $("#menu-btn").addEventListener("click", () => $("#sidebar").classList.toggle("collapsed"));
   bindEngine();
   $("#sync-btn").addEventListener("click", sync);
   $("#refresh-btn").addEventListener("click", sync);
   $("#back-btn").addEventListener("click", () => { state.openId = null; loadList(); });
   $("#calendar-btn").addEventListener("click", () => toggleCalendar(!state.calendarOpen));
   $("#calendar-close").addEventListener("click", () => toggleCalendar(false));
+  $("#chat-btn").addEventListener("click", () => toggleChat(!state.chatOpen));
+  $("#chat-close").addEventListener("click", () => toggleChat(false));
+  $("#chat-form").addEventListener("submit", (event) => { event.preventDefault(); askChat($("#chat-input").value); });
+  // Hell/Dunkel umschalten. Der Startwert steht schon (Skript im <head> von index.html).
+  const showTheme = () => {
+    const dark = document.documentElement.dataset.theme === "dark";
+    $("#theme-icon").textContent = dark ? "light_mode" : "dark_mode";
+    $("#theme-btn").title = dark ? "Hellmodus" : "Dunkelmodus";
+    $("#theme-btn").setAttribute("aria-checked", String(dark));
+  };
+  $("#theme-btn").addEventListener("click", () => {
+    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem("localmail-theme", next); } catch (e) { /* egal */ }
+    showTheme();
+  });
+  showTheme();
   $("#settings-btn").addEventListener("click", () => ($("#settings-menu").hidden = !$("#settings-menu").hidden));
+  $("#reset-btn").addEventListener("click", resetAll);
   $("#testset-toggle").addEventListener("change", (event) => {
     state.testset = event.target.checked;
     applyMode();

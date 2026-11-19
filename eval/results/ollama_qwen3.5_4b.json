@@ -1,0 +1,242 @@
+{
+  "date": "2026-11-19T12:23:07",
+  "backend": "ollama",
+  "model": "qwen3.5:4b",
+  "settings": {
+    "temperature": 0,
+    "reasoning_effort": "none",
+    "structured_output": "json_schema",
+    "max_body_chars": 6000,
+    "workers_parallel": 4
+  },
+  "machine": {
+    "chip": "Apple M3 Pro",
+    "system": "macOS-27.2.1-arm64-arm-64bit"
+  },
+  "sequential": {
+    "accuracy": 0.955,
+    "macro_f1": 0.956,
+    "wrong": [
+      "t10: erwartet aufgabe, erhalten info"
+    ],
+    "event_correct": 22,
+    "errors": [],
+    "wall_seconds": 57.8,
+    "seconds_per_mail": 2.63,
+    "median_seconds": 2.73,
+    "max_seconds": 4.9
+  },
+  "parallel": {
+    "accuracy": 0.955,
+    "macro_f1": 0.956,
+    "wrong": [
+      "t10: erwartet aufgabe, erhalten info"
+    ],
+    "event_correct": 22,
+    "errors": [],
+    "wall_seconds": 55.1,
+    "seconds_per_mail": 2.5,
+    "median_seconds": 8.95,
+    "max_seconds": 14.78
+  },
+  "per_mail": [
+    {
+      "id": "t01",
+      "seconds": 3.51,
+      "expected": "termin",
+      "got": "termin",
+      "expected_event": true,
+      "got_event": true,
+      "error": null
+    },
+    {
+      "id": "t02",
+      "seconds": 3.48,
+      "expected": "termin",
+      "got": "termin",
+      "expected_event": true,
+      "got_event": true,
+      "error": null
+    },
+    {
+      "id": "t03",
+      "seconds": 3.04,
+      "expected": "termin",
+      "got": "termin",
+      "expected_event": true,
+      "got_event": true,
+      "error": null
+    },
+    {
+      "id": "t04",
+      "seconds": 3.07,
+      "expected": "termin",
+      "got": "termin",
+      "expected_event": true,
+      "got_event": true,
+      "error": null
+    },
+    {
+      "id": "t05",
+      "seconds": 4.9,
+      "expected": "termin",
+      "got": "termin",
+      "expected_event": true,
+      "got_event": true,
+      "error": null
+    },
+    {
+      "id": "t06",
+      "seconds": 3.09,
+      "expected": "termin",
+      "got": "termin",
+      "expected_event": true,
+      "got_event": true,
+      "error": null
+    },
+    {
+      "id": "t07",
+      "seconds": 2.8,
+      "expected": "aufgabe",
+      "got": "aufgabe",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t08",
+      "seconds": 2.27,
+      "expected": "aufgabe",
+      "got": "aufgabe",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t09",
+      "seconds": 1.56,
+      "expected": "aufgabe",
+      "got": "aufgabe",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t10",
+      "seconds": 2.12,
+      "expected": "aufgabe",
+      "got": "info",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t11",
+      "seconds": 1.9,
+      "expected": "aufgabe",
+      "got": "aufgabe",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t12",
+      "seconds": 2.08,
+      "expected": "info",
+      "got": "info",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t13",
+      "seconds": 2.23,
+      "expected": "info",
+      "got": "info",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t14",
+      "seconds": 1.23,
+      "expected": "info",
+      "got": "info",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t15",
+      "seconds": 1.93,
+      "expected": "info",
+      "got": "info",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t16",
+      "seconds": 1.81,
+      "expected": "newsletter",
+      "got": "newsletter",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t17",
+      "seconds": 2.98,
+      "expected": "newsletter",
+      "got": "newsletter",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t18",
+      "seconds": 1.79,
+      "expected": "newsletter",
+      "got": "newsletter",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t19",
+      "seconds": 3.08,
+      "expected": "spam",
+      "got": "spam",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t20",
+      "seconds": 2.67,
+      "expected": "spam",
+      "got": "spam",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t21",
+      "seconds": 3.18,
+      "expected": "spam",
+      "got": "spam",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t22",
+      "seconds": 3.05,
+      "expected": "spam",
+      "got": "spam",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    }
+  ]
+}
