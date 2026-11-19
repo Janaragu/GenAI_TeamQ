@@ -129,12 +129,13 @@ def get_llm():
             timeout=120,
         )
 
-    extra = {}
-    if engine["provider"] == "ollama":
-        # Denkmodus aus: Mit qwen3.5:4b dauerte eine Mail sonst ~120 s statt ~3 s, und vier
-        # parallele Anfragen liefen in den Timeout. Gemessen am 15.11.2026 auf den 22 Testmails:
-        # 21/22 Kategorien richtig. extra_body={"think": False} wirkte über /v1 nicht.
-        extra["reasoning_effort"] = "none"
+    # Denkmodus aus, bei Ollama und LM Studio:
+    # - Ollama, qwen3.5:4b: eine Mail dauerte sonst ~120 s statt ~3 s, und vier parallele
+    #   Anfragen liefen in den Timeout. Gemessen am 15.11.2026 auf den 22 Testmails:
+    #   21/22 Kategorien richtig. extra_body={"think": False} wirkte über /v1 nicht.
+    # - LM Studio, google/gemma-4-12b-qat: denkt ebenfalls standardmässig, ~60-70 s pro Mail.
+    #   Mit reasoning_effort="none" keine Denk-Tokens mehr (gemessen am 19.11.2026).
+    extra = {"reasoning_effort": "none"}
     return ChatOpenAI(
         model=engine["model"],
         base_url=engine["base_url"],
