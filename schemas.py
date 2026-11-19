@@ -37,3 +37,20 @@ class EmailAnalysis(BaseModel):
         default=None,
         description="Nur ausfüllen, wenn die Mail einen konkreten Termin mit Datum nennt",
     )
+
+
+class ChatAnswer(BaseModel):
+    """Antwort im Chatfenster (agent/chat.py)."""
+
+    on_topic: bool = Field(
+        description="True, wenn die Frage die Mails des Nutzers betrifft. False bei allem anderen."
+    )
+    answer: str = Field(description="Antwort an den Nutzer, auf Deutsch, ohne Markdown")
+    reply_to_id: str | None = Field(
+        default=None,
+        description="Nur wenn der Nutzer eine Antwort auf eine Mail will: die ID dieser Mail aus der Liste",
+    )
+    reply_instruction: str | None = Field(
+        default=None,
+        description="Nur zusammen mit reply_to_id: was in der Antwort stehen soll, z. B. 'Termin zusagen'",
+    )

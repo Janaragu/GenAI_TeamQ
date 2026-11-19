@@ -11,6 +11,7 @@ import base64
 import os
 import socket
 from datetime import datetime, timezone
+from email.mime.text import MIMEText
 from pathlib import Path
 
 from bs4 import BeautifulSoup
@@ -34,7 +35,8 @@ if os.getenv("GOOGLE_FORCE_IPV4", "").lower() in ("1", "true", "yes"):
 
     socket.getaddrinfo = _ipv4_only
 
-# gmail.modify = Mails lesen und Labels setzen (nicht löschen), calendar.events = Termine
+# gmail.modify = Mails lesen, Labels setzen und Antworten senden (nicht löschen),
+# calendar.events = Termine
 DEFAULT_SCOPES = (
     "https://www.googleapis.com/auth/gmail.modify,"
     "https://www.googleapis.com/auth/calendar.events"
@@ -139,6 +141,37 @@ def apply_label(message_id: str, label_name: str) -> dict:
         label_id = service.users().labels().create(userId="me", body={"name": label_name}).execute()["id"]
     service.users().messages().modify(userId="me", id=message_id, body={"addLabelIds": [label_id]}).execute()
     return {"ok": True}
+
+
+@mcp.tool()
+def send_reply(message_id: str, body: str) -> dict:
+    """Beantwortet eine Mail. Die Antwort landet im selben Verlauf (Thread) wie das Original."""
+    service = gmail()
+    # Vom Original brauchen wir nur ein paar Kopfzeilen, nicht den ganzen Text.
+    original = service.users().messages().get(
+        userId="me", id=message_id, format="metadata",
+        metadataHeaders=["From", "Reply-To", "Subject", "Message-ID", "References"],
+    ).execute()
+    headers = {h["name"].lower(): h["value"] for h in original["payload"].get("headers", [])}
+
+    subject = headers.get("subject", "")
+    if not subject.lower().startswith("re:"):
+        subject = f"Re: {subject}"
+
+    reply = MIMEText(body, "plain", "utf-8")
+    reply["To"] = headers.get("reply-to") or headers.get("from", "")  # Reply-To hat Vorrang
+    reply["Subject"] = subject
+    # Diese zwei Kopfzeilen sagen dem Mailprogramm des Empfängers, worauf geantwortet wird.
+    if headers.get("message-id"):
+        reply["In-Reply-To"] = headers["message-id"]
+        reply["References"] = f"{headers.get('references', '')} {headers['message-id']}".strip()
+
+    # Gmail erwartet die ganze Mail Base64-kodiert. Absender ist das angemeldete Konto.
+    raw = base64.urlsafe_b64encode(reply.as_bytes()).decode()
+    sent = service.users().messages().send(
+        userId="me", body={"raw": raw, "threadId": original["threadId"]}
+    ).execute()
+    return {"id": sent["id"]}
 
 
 # -----------------------------------------------------------------------------

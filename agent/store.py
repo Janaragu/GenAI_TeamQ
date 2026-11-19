@@ -218,6 +218,27 @@ def list_emails(source, mailbox, search="", limit=100):
     return [with_event(row) for row in rows]
 
 
+def reset_all():
+    """Löscht alle Mails, das Protokoll und den gespeicherten Stand des Agenten.
+
+    Für einen sauberen Neustart, z. B. vor einer Demo. Danach holt der nächste Abruf
+    alle Mails neu und lässt sie neu analysieren. Gmail und Google Kalender werden
+    NICHT angefasst: gesetzte Labels und eingetragene Termine bleiben dort bestehen.
+    """
+    run("DELETE FROM emails")
+    run("DELETE FROM activity_log")
+    # checkpoints und writes legt der LangGraph-Checkpointer (agent/graph.py) in derselben
+    # Datenbank an. Ohne sie wüsste der Graph nichts mehr von offenen Terminvorschlägen.
+    run("DELETE FROM checkpoints")
+    run("DELETE FROM writes")
+
+
+def recent_emails(source, limit=40):
+    """Die neuesten Mails einer Quelle, für den Chat (inklusive Spam)."""
+    rows = query("SELECT * FROM emails WHERE source = ? ORDER BY received_at DESC LIMIT ?", (source, limit))
+    return [with_event(row) for row in rows]
+
+
 def get_email(email_id):
     rows = query("SELECT * FROM emails WHERE id = ?", (email_id,))
     return with_event(rows[0]) if rows else None

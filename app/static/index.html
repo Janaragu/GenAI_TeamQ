@@ -16,6 +16,16 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0..1,0&display=block">
   <link rel="stylesheet" href="/static/style.css">
+  <script>
+    // Hell/Dunkel vor dem ersten Zeichnen setzen, sonst blitzt kurz das helle Design auf.
+    // Gespeicherte Wahl gewinnt, sonst die Einstellung des Betriebssystems.
+    (function () {
+      var saved = null;
+      try { saved = localStorage.getItem("localmail-theme"); } catch (e) { /* egal */ }
+      var dark = saved ? saved === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+    })();
+  </script>
 </head>
 <body>
 
@@ -40,6 +50,10 @@
         <span class="dot"></span><span class="ms" id="engine-chip-icon">memory</span><span id="engine-chip-text">Engine…</span>
       </button>
       <span class="mode-badge" id="mode-badge" hidden>Testmodus</span>
+      <button class="icon-btn" id="theme-btn" type="button" role="switch" aria-checked="false"
+              title="Dunkelmodus" aria-label="Dunkelmodus">
+        <span class="ms" id="theme-icon">dark_mode</span>
+      </button>
       <button class="icon-btn" id="settings-btn" title="Einstellungen" aria-label="Einstellungen">
         <span class="ms">settings</span>
       </button>
@@ -51,6 +65,9 @@
         <p class="hint" id="settings-hint"></p>
         <button class="menu-item" id="engine-menu-btn" type="button">
           <span class="ms">memory</span><span>KI-Engine einrichten</span>
+        </button>
+        <button class="menu-item danger" id="reset-btn" type="button">
+          <span class="ms">restart_alt</span><span>Alles zurücksetzen</span>
         </button>
       </div>
     </div>
@@ -125,9 +142,27 @@
       <p class="panel-sub" id="calendar-sub"></p>
       <div id="calendar-list"></div>
     </aside>
+    <!-- ===== Rechts: Chat mit der KI über die eigenen Mails (wie Gemini in Gmail) ===== -->
+    <aside class="chat-panel" id="chat-panel" hidden>
+      <div class="panel-head">
+        <span>Mail-Assistent</span>
+        <button class="icon-btn" id="chat-close" title="Schliessen" aria-label="Chat schliessen">
+          <span class="ms">close</span>
+        </button>
+      </div>
+      <!-- Verlauf: Fragen und Antworten, füllt app.js -->
+      <div class="chat-log" id="chat-log"></div>
+      <form class="chat-form" id="chat-form">
+        <input id="chat-input" type="text" maxlength="500" autocomplete="off" placeholder="Frage zu deinen Mails…">
+        <button class="icon-btn" type="submit" title="Senden" aria-label="Frage senden"><span class="ms">send</span></button>
+      </form>
+    </aside>
     <div class="side-strip">
       <button class="strip-btn" id="calendar-btn" title="Kalender" aria-label="Kalender öffnen">
         <span class="ms">calendar_month</span>
+      </button>
+      <button class="strip-btn" id="chat-btn" title="Mail-Assistent" aria-label="Mail-Assistent öffnen">
+        <span class="ms">auto_awesome</span>
       </button>
     </div>
   </div>
