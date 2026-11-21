@@ -397,18 +397,94 @@ async function loadLog() {
   }
 }
 
-// ----- 7. Google Kalender rechts: Termine der nächsten 14 Tage, nach Tagen -----
-function dayLabel(date) {
-  const today = new Date();
-  const tomorrow = new Date(today);
-  tomorrow.setDate(today.getDate() + 1);
-  if (date.toDateString() === today.toDateString()) return "Heute";
-  if (date.toDateString() === tomorrow.toDateString()) return "Morgen";
-  return date.toLocaleDateString("de-CH", { weekday: "long", day: "numeric", month: "long" });
-}
+// ----- 7. Google Kalender rechts -----
+// Aufbau wie die Terminübersicht in Google Kalender:
+//   oben ein kleiner Monatskalender (heute markiert, Tage mit Terminen haben einen Punkt),
+//   darunter die Termine der nächsten 14 Tage, nach Tagen gruppiert.
 
 // Ganztägige Termine haben nur ein Datum ("2026-11-14"); als Ortszeit lesen.
 const eventDate = (event) => (event.all_day ? new Date(`${event.start}T00:00:00`) : new Date(event.start));
+const eventEnd = (event) => (event.all_day || !event.end ? null : new Date(event.end));
+const timeText = (date) => date.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" });
+
+// Datum als Schlüssel "2026-11-21", damit man Tage vergleichen kann.
+const dayKey = (date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
+// "Heute" / "Morgen" / "Montag", darunter das Datum.
+function dayHead(date) {
+  const today = new Date();
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  let name = date.toLocaleDateString("de-CH", { weekday: "long" });
+  if (dayKey(date) === dayKey(today)) name = "Heute";
+  if (dayKey(date) === dayKey(tomorrow)) name = "Morgen";
+  return el("div", { class: dayKey(date) === dayKey(today) ? "day-head today" : "day-head" },
+    el("span", { class: "num", text: String(date.getDate()) }),
+    el("span", { class: "label" },
+      el("b", { text: name }),
+      el("small", { text: date.toLocaleDateString("de-CH", { weekday: "short", day: "numeric", month: "long" }) }),
+    ),
+  );
+}
+
+// Kleiner Monatskalender. Ein Klick auf einen Tag mit Terminen springt zu diesem Tag.
+function miniMonth(eventDays) {
+  const today = new Date();
+  const first = new Date(today.getFullYear(), today.getMonth(), 1);
+  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+  const offset = (first.getDay() + 6) % 7;            // Wochen beginnen am Montag
+  const cellCount = Math.ceil((offset + daysInMonth) / 7) * 7;
+
+  const cells = ["M", "D", "M", "D", "F", "S", "S"].map((name) => el("span", { class: "wd", text: name }));
+  for (let i = 0; i < cellCount; i++) {
+    const date = new Date(first);
+    date.setDate(1 - offset + i);
+    const key = dayKey(date);
+    const classes = ["md"];
+    if (date.getMonth() !== today.getMonth()) classes.push("other");
+    if (key === dayKey(today)) classes.push("today");
+    if (eventDays.has(key)) classes.push("has-event");
+
+    if (eventDays.has(key)) {
+      cells.push(el("button", {
+        type: "button",
+        class: classes.join(" "),
+        text: String(date.getDate()),
+        title: `Termine am ${date.toLocaleDateString("de-CH")}`,
+        onclick: () => document.getElementById(`day-${key}`).scrollIntoView({ behavior: "smooth", block: "start" }),
+      }));
+    } else {
+      cells.push(el("span", { class: classes.join(" "), text: String(date.getDate()) }));
+    }
+  }
+  return el("div", { class: "mini-month" },
+    el("div", { class: "mm-title", text: today.toLocaleDateString("de-CH", { month: "long", year: "numeric" }) }),
+    el("div", { class: "mm-grid" }, ...cells),
+  );
+}
+
+// Ein Termin: Uhrzeit (Beginn–Ende), Titel, Ort. Vergangene Termine sind blasser,
+// ein laufender Termin bekommt das Schild "Jetzt".
+function calendarEntry(event) {
+  const start = eventDate(event);
+  const end = eventEnd(event);
+  const now = new Date();
+  const time = event.all_day ? "Ganztägig" : timeText(start) + (end ? ` – ${timeText(end)}` : "");
+  const running = !event.all_day && start <= now && end && end > now;
+
+  const classes = ["event-item"];
+  if (event.all_day) classes.push("all-day");
+  if (end && end < now) classes.push("past");
+
+  const isLink = event.link && event.link.startsWith("https://");
+  return el(isLink ? "a" : "div",
+    { class: classes.join(" "), href: isLink ? event.link : null, target: isLink ? "_blank" : null, rel: isLink ? "noopener" : null },
+    el("div", { class: "time" }, el("span", { text: time }), running ? el("span", { class: "now", text: "Jetzt" }) : null),
+    el("div", { class: "t", text: event.title }),
+    event.location ? el("div", { class: "s" }, icon("location_on"), el("span", { text: event.location })) : null,
+  );
+}
 
 async function loadCalendar() {
   const list = $("#calendar-list");
@@ -418,27 +494,21 @@ async function loadCalendar() {
     $("#calendar-sub").textContent = data.testmode
       ? "Testmodus: nur im Test bestätigte Termine, der echte Kalender wird nicht gelesen."
       : "Nächste 14 Tage aus deinem Google Kalender";
-    if (!data.events.length) {
-      list.replaceChildren(el("p", { class: "panel-sub", text: "Keine Termine." }));
-      return;
-    }
-    const nodes = [];
-    let lastDay = "";
+
+    // Termine nach Tag sortieren: { "2026-11-21": [termin, termin], ... }
+    const byDay = new Map();
     for (const event of data.events) {
-      const date = eventDate(event);
-      const label = dayLabel(date);
-      if (label !== lastDay) {
-        nodes.push(el("div", { class: label === "Heute" ? "day today" : "day", text: label }));
-        lastDay = label;
-      }
-      const time = event.all_day
-        ? "Ganztägig"
-        : date.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" });
-      const tag = event.link && event.link.startsWith("https://") ? "a" : "div";
-      nodes.push(el(tag,
-        { class: "event-item", href: tag === "a" ? event.link : null, target: tag === "a" ? "_blank" : null, rel: tag === "a" ? "noopener" : null },
-        el("div", { class: "t", text: event.title }),
-        el("div", { class: "s", text: time + (event.location ? ` · ${event.location}` : "") }),
+      const key = dayKey(eventDate(event));
+      if (!byDay.has(key)) byDay.set(key, []);
+      byDay.get(key).push(event);
+    }
+
+    const nodes = [miniMonth(new Set(byDay.keys()))];
+    if (!data.events.length) nodes.push(el("p", { class: "panel-sub empty-cal", text: "Keine Termine." }));
+    for (const [key, events] of byDay) {
+      nodes.push(el("section", { class: "day-group", id: `day-${key}` },
+        dayHead(eventDate(events[0])),
+        ...events.map(calendarEntry),
       ));
     }
     list.replaceChildren(...nodes);
