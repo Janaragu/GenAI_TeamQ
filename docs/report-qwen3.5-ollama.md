@@ -38,7 +38,7 @@ Rohdaten pro Mail: [`eval/results/ollama_qwen3.5_4b.json`](../eval/results/ollam
 - Mails mit Termin brauchen länger (3.0–4.9 s) als andere (1.2–3.2 s), weil das Modell dann zusätzlich den Termin ausgibt.
 - 4 parallele Anfragen sind kaum schneller als nacheinander (55 s statt 58 s), jede einzelne Anfrage wartet aber länger (Median 9 s). Das spricht dafür, dass Ollama die Anfragen in dieser Konfiguration hintereinander abarbeitet.
 
-## Vergleich mit Gemma (noch auszufüllen)
+## Vergleich mit Gemma (gemessen am 21.11.2026)
 
 Gleicher Befehl, nur anderes Backend und Modell:
 
@@ -48,15 +48,15 @@ python -m eval.benchmark --backend lmstudio --model google/gemma-4-12b-qat
 
 | Kennzahl | Qwen 3.5 4B (Ollama) | Gemma 4 12B QAT (LM Studio) |
 |---|---|---|
-| Kategorie richtig | 21/22 | |
-| Termin ja/nein richtig | 22/22 | |
-| Zeit pro Mail, nacheinander | 2.63 s | |
-| Zeit pro Mail, 4 parallel | 2.50 s | |
-| Modellgrösse auf der Platte | 4.0 GB | |
+| Kategorie richtig | 21/22 | 22/22 |
+| Termin ja/nein richtig | 22/22 | 22/22 |
+| Zeit pro Mail, nacheinander | 2.63 s | 6.29 s |
+| Zeit pro Mail, 4 parallel | 2.50 s | 3.72 s |
+| Modellgrösse auf der Platte | 4.0 GB | 7.15 GB |
 
-Hinweis: Eine frühere Messung von Gemma am selben Tag mit einem anderen Skript ergab 22/22 richtig,
-etwa 5.6 s pro Mail nacheinander und 2.75 s pro Mail bei 4 parallelen Anfragen. Für einen fairen
-Vergleich den Befehl oben laufen lassen.
+Rohdaten: [`eval/results/lmstudio_google_gemma-4-12b-qat.json`](../eval/results/lmstudio_google_gemma-4-12b-qat.json).
+Eine frühere Messung von Gemma am 19.11.2026 mit einem anderen Skript ergab ebenfalls 22/22 richtig,
+etwa 5.6 s pro Mail nacheinander und 2.75 s pro Mail bei 4 parallelen Anfragen.
 
 ## Grenzen der Messung
 

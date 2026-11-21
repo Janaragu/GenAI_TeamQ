@@ -1,0 +1,238 @@
+{
+  "date": "2026-11-21T17:10:56",
+  "backend": "lmstudio",
+  "model": "google/gemma-4-12b-qat",
+  "settings": {
+    "temperature": 0,
+    "reasoning_effort": "none",
+    "structured_output": "json_schema",
+    "max_body_chars": 6000,
+    "workers_parallel": 4
+  },
+  "machine": {
+    "chip": "Apple M3 Pro",
+    "system": "macOS-27.2.1-arm64-arm-64bit"
+  },
+  "sequential": {
+    "accuracy": 1.0,
+    "macro_f1": 1.0,
+    "wrong": [],
+    "event_correct": 22,
+    "errors": [],
+    "wall_seconds": 138.3,
+    "seconds_per_mail": 6.29,
+    "median_seconds": 4.1,
+    "max_seconds": 15.25
+  },
+  "parallel": {
+    "accuracy": 1.0,
+    "macro_f1": 1.0,
+    "wrong": [],
+    "event_correct": 22,
+    "errors": [],
+    "wall_seconds": 81.9,
+    "seconds_per_mail": 3.72,
+    "median_seconds": 16.51,
+    "max_seconds": 24.76
+  },
+  "per_mail": [
+    {
+      "id": "t01",
+      "seconds": 13.84,
+      "expected": "termin",
+      "got": "termin",
+      "expected_event": true,
+      "got_event": true,
+      "error": null
+    },
+    {
+      "id": "t02",
+      "seconds": 15.25,
+      "expected": "termin",
+      "got": "termin",
+      "expected_event": true,
+      "got_event": true,
+      "error": null
+    },
+    {
+      "id": "t03",
+      "seconds": 12.24,
+      "expected": "termin",
+      "got": "termin",
+      "expected_event": true,
+      "got_event": true,
+      "error": null
+    },
+    {
+      "id": "t04",
+      "seconds": 12.65,
+      "expected": "termin",
+      "got": "termin",
+      "expected_event": true,
+      "got_event": true,
+      "error": null
+    },
+    {
+      "id": "t05",
+      "seconds": 12.05,
+      "expected": "termin",
+      "got": "termin",
+      "expected_event": true,
+      "got_event": true,
+      "error": null
+    },
+    {
+      "id": "t06",
+      "seconds": 9.69,
+      "expected": "termin",
+      "got": "termin",
+      "expected_event": true,
+      "got_event": true,
+      "error": null
+    },
+    {
+      "id": "t07",
+      "seconds": 4.52,
+      "expected": "aufgabe",
+      "got": "aufgabe",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t08",
+      "seconds": 3.81,
+      "expected": "aufgabe",
+      "got": "aufgabe",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t09",
+      "seconds": 3.67,
+      "expected": "aufgabe",
+      "got": "aufgabe",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t10",
+      "seconds": 4.36,
+      "expected": "aufgabe",
+      "got": "aufgabe",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t11",
+      "seconds": 3.23,
+      "expected": "aufgabe",
+      "got": "aufgabe",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t12",
+      "seconds": 3.99,
+      "expected": "info",
+      "got": "info",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t13",
+      "seconds": 3.4,
+      "expected": "info",
+      "got": "info",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t14",
+      "seconds": 3.5,
+      "expected": "info",
+      "got": "info",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t15",
+      "seconds": 3.65,
+      "expected": "info",
+      "got": "info",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t16",
+      "seconds": 3.74,
+      "expected": "newsletter",
+      "got": "newsletter",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t17",
+      "seconds": 3.61,
+      "expected": "newsletter",
+      "got": "newsletter",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t18",
+      "seconds": 3.71,
+      "expected": "newsletter",
+      "got": "newsletter",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t19",
+      "seconds": 4.2,
+      "expected": "spam",
+      "got": "spam",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t20",
+      "seconds": 5.3,
+      "expected": "spam",
+      "got": "spam",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t21",
+      "seconds": 3.6,
+      "expected": "spam",
+      "got": "spam",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    },
+    {
+      "id": "t22",
+      "seconds": 4.24,
+      "expected": "spam",
+      "got": "spam",
+      "expected_event": false,
+      "got_event": false,
+      "error": null
+    }
+  ]
+}
