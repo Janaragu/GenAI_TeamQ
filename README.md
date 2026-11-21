@@ -125,12 +125,44 @@ Nacheinander (eine Anfrage nach der anderen) brauchten die lokalen Modelle pro M
 
 **Einordnung:** Die lokalen Modelle erreichen auf diesem Testset dieselbe oder eine bessere Trefferquote als die Cloud-API, sind auf diesem Rechner aber langsamer. Das kleinere Modell (Qwen, 4 GB) ist schneller, das grössere (Gemma, 7 GB) genauer.
 
+**Nächster Schritt:** Wir haben neue Mails bekommen. Das Testset wird damit erweitert und die Evaluation neu durchgeführt. Die Zahlen oben sind ein erster Stand (22 Testmails).
+
+### Nachvollziehbarkeit mit LangSmith
+
+LangSmith zeichnet jeden Durchlauf des Agenten als **Trace** auf: welche Knoten liefen, was das Modell als Eingabe bekam, was es zurückgab, wie lange es dauerte und wie viele Tokens es brauchte. Im Code ist dafür nichts eingebaut. LangChain und LangGraph schicken die Traces automatisch, sobald in der `.env` `LANGSMITH_TRACING=true` und ein `LANGSMITH_API_KEY` stehen. Projekt: `localmail_w1`, EU-Server (`eu.api.smith.langchain.com`).
+
+**Aufbau eines Traces** (eine Mail, echtes Beispiel aus `localmail_w1`):
+
+```
+LangGraph                       Wurzel: Eingabe = Mail, Ausgabe = Analyse + Label
+├─ analyze
+│  └─ ChatOpenAI  (llm)         Prompt (System + Mail) -> JSON nach Schema EmailAnalysis
+│     RunnableLambda            JSON wird in EmailAnalysis umgewandelt
+├─ apply_label                  Label über den MCP-Server, z. B. LocalMail/Termin
+│  └─ route_after_label         Weiche: Termin gefunden -> confirm_event
+└─ confirm_event                Status "interrupted": wartet auf Ja/Nein in der Oberfläche
+```
+
+Was pro LLM-Aufruf sichtbar ist: Modellname, Parameter, die vollständigen Nachrichten, die Antwort, Tokens und Laufzeit. Die `thread_id` im Trace ist die Gmail-ID der Mail, so lässt sich jede Analyse einer Mail zuordnen.
+
+**Lokal und Cloud im Trace:** Derselbe Graph, dieselben Knoten, derselbe Prompt. Unterschiede sieht man nur im `ChatOpenAI`-Schritt:
+
+| | Lokal (Ollama `qwen3.5:4b`) | Cloud (`gpt-6-luna`) |
+| --- | --- | --- |
+| Modell-Server | `localhost` | FHNW-Proxy beim Anbieter |
+| Parameter im Trace | `temperature=0`, `reasoning_effort="none"` | keine `temperature` (Proxy lehnt sie ab) |
+| Tokens | Eingabe und Ausgabe | zusätzlich Denk-Tokens (`reasoning`) |
+| Fehlerbild | — | Fehler 400 vom Azure-Inhaltsfilter |
+
+**Wichtig für den Datenschutz:** Ein Trace enthält die ganze Mail (Absender, Betreff, Text) und die Analyse. Mit eingeschaltetem Tracing gehen die Mail-Inhalte also an LangSmith, auch wenn das Modell lokal läuft. Für einen wirklich lokalen Betrieb `LANGSMITH_TRACING=false` setzen. Wir nutzen das Tracing nur mit Testmails und dem Gmail-Testkonto.
+
 ## 5. Limitationen
 
 - **22 Testmails sind wenig:** Ein Fehler mehr oder weniger ändert die Genauigkeit um 4.5 Prozentpunkte. Die Testmails sind kurz (1–3 Sätze), echte Mails sind länger.
 - Geprüft werden nur Kategorie und «Termin ja/nein», nicht ob Datum, Uhrzeit und Ort des Termins stimmen.
 - Die Mails liegen weiterhin bei Google. Privat ist nur die KI-Auswertung, und nur mit einer lokalen Engine.
 - Im Cloud-Modus gehen die Mail-Inhalte an den Cloud-Anbieter.
+- Mit eingeschaltetem LangSmith-Tracing gehen die Mail-Inhalte auch an LangSmith, unabhängig von der Engine.
 - Lokale Modelle brauchen einen leistungsfähigen Rechner. Die Zeiten oben gelten für einen M3 Pro.
 - Im Testmodus von Google läuft die Anmeldung (`token.json`) nach 7 Tagen ab.
 
@@ -148,7 +180,7 @@ Nacheinander (eine Anfrage nach der anderen) brauchten die lokalen Modelle pro M
 | Mail und Kalender | Gmail-API, Google-Calendar-API, OAuth über `google-auth-oauthlib` |
 | Oberfläche | FastAPI, Uvicorn, HTML/CSS/JavaScript |
 | Speicher | SQLite (Mails, Protokoll, Agent-Zustand) |
-| Tracing | LangSmith (optional) |
+| Tracing | LangSmith (optional, Projekt `localmail_w1`) |
 | Entwicklung | Claude Code |
 
 ---
