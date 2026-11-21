@@ -308,21 +308,51 @@ def ask_chat(request: ChatRequest, testset: bool = False):
 # 8. Google Kalender: Termine der nächsten Tage für die Seitenleiste rechts
 # -----------------------------------------------------------------------------
 @app.get("/api/calendar")
-def calendar(testset: bool = False, days: int = 14):
-    if testset:
-        # Im Testmodus wird der echte Kalender nicht angefasst.
-        events = [{**event, "all_day": False, "link": None} for event in store.confirmed_test_events()]
-        return {"events": events, "testmode": True}
+def calendar(testset: bool = False, year: int = 0, month: int = 0):
+    """Termine eines Monats: aus Google Kalender und aus Mails mit Label Termin.
 
-    now = datetime.now(TIMEZONE)
+    Ohne year/month: der aktuelle Monat. Jeder Termin hat ein Feld state:
+      google      steht nur im Google Kalender
+      vorschlag / bestaetigt / verworfen   kommt aus einer Mail (siehe store.termin_mail_events)
+    """
+    today = datetime.now(TIMEZONE)
+    year = year or today.year
+    month = month or today.month
+    mail_events = store.termin_mail_events(inbox.source_name(testset), f"{year}-{month:02d}")
+
+    def by_start(event):
+        return event["start"]
+
+    if testset:
+        # Im Testmodus wird der echte Kalender nicht angefasst, nur die Testmails zählen.
+        return {"events": sorted(mail_events, key=by_start), "testmode": True, "error": None}
+
+    # Google Kalender für den ganzen Monat lesen. Klappt das nicht, trotzdem die Mail-Termine zeigen.
+    first_day = datetime(year, month, 1, tzinfo=TIMEZONE)
+    next_month = datetime(year + month // 12, month % 12 + 1, 1, tzinfo=TIMEZONE)
+    error = None
     try:
-        response = call_tool(
-            "list_calendar_events",
-            {"time_min": now.isoformat(), "time_max": (now + timedelta(days=days)).isoformat()},
-        )
-    except Exception as error:
-        raise HTTPException(502, f"Kalender nicht erreichbar: {error}")
-    return {"events": response["events"], "testmode": False}
+        google = call_tool("list_calendar_events", {
+            "time_min": first_day.isoformat(),
+            "time_max": next_month.isoformat(),
+            "max_results": 250,
+        })["events"]
+    except Exception as problem:
+        google, error = [], f"Google Kalender nicht erreichbar: {problem}"
+
+    # Bestätigte Termine aus Mails stehen schon im Google Kalender (gleicher Link).
+    # Dort nur vermerken, aus welcher Mail sie stammen, statt sie doppelt zu zeigen.
+    mail_by_link = {event["link"]: event for event in mail_events if event["link"]}
+    events = []
+    for event in google:
+        from_mail = mail_by_link.pop(event.get("link"), None)
+        if from_mail:
+            events.append({**event, "mail_id": from_mail["mail_id"], "state": "bestaetigt"})
+        else:
+            events.append({**event, "mail_id": None, "state": "google"})
+    shown_links = {event.get("link") for event in google}
+    events += [event for event in mail_events if not event["link"] or event["link"] not in shown_links]
+    return {"events": sorted(events, key=by_start), "testmode": False, "error": error}
 
 
 # -----------------------------------------------------------------------------

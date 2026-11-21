@@ -253,14 +253,33 @@ def unread_counts(source):
     return dict(counts)
 
 
-def confirmed_test_events():
-    """Im Testmodus bestätigte Termine (die nicht wirklich im Kalender stehen)."""
+def termin_mail_events(source, month):
+    """Termine aus Mails mit Label Termin, deren Beginn im Monat month liegt (z. B. "2026-11").
+
+    state sagt, wie weit der Termin ist:
+      vorschlag   noch nicht bestätigt (wartet auf Ja/Nein in der Mail)
+      bestaetigt  eingetragen
+      verworfen   abgelehnt
+    """
     rows = query(
-        "SELECT event_json FROM emails WHERE source = 'test'"
-        " AND event_json IS NOT NULL AND event_link IS NOT NULL"
+        "SELECT id, status, event_json, event_link FROM emails"
+        " WHERE source = ? AND category = 'termin' AND event_json IS NOT NULL",
+        (source,),
     )
-    events = [json.loads(row["event_json"]) for row in rows]
-    return sorted(events, key=lambda event: event["start"])
+    events = []
+    for row in rows:
+        event = json.loads(row["event_json"])
+        if not event["start"].startswith(month):
+            continue
+        if row["status"] == "awaiting_confirmation":
+            state = "vorschlag"
+        elif row["event_link"]:
+            state = "bestaetigt"
+        else:
+            state = "verworfen"
+        link = row["event_link"] if (row["event_link"] or "").startswith("https://") else None
+        events.append({**event, "all_day": False, "link": link, "mail_id": row["id"], "state": state})
+    return events
 
 
 # -----------------------------------------------------------------------------

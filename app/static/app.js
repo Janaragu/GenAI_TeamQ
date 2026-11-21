@@ -397,10 +397,12 @@ async function loadLog() {
   }
 }
 
-// ----- 7. Google Kalender rechts -----
+// ----- 7. Kalender rechts -----
 // Aufbau wie die Terminübersicht in Google Kalender:
-//   oben ein kleiner Monatskalender (heute markiert, Tage mit Terminen haben einen Punkt),
-//   darunter die Termine der nächsten 14 Tage, nach Tagen gruppiert.
+//   oben ein Monatskalender mit Pfeilen zum Blättern (heute markiert, Tage mit Terminen
+//   haben einen Punkt), darunter alle Termine dieses Monats, nach Tagen gruppiert.
+// Die Termine kommen aus zwei Quellen (siehe /api/calendar in app/main.py):
+//   Google Kalender und Mails, die der Agent als "Termin" eingeordnet hat.
 
 // Ganztägige Termine haben nur ein Datum ("2026-11-14"); als Ortszeit lesen.
 const eventDate = (event) => (event.all_day ? new Date(`${event.start}T00:00:00`) : new Date(event.start));
@@ -428,11 +430,30 @@ function dayHead(date) {
   );
 }
 
-// Kleiner Monatskalender. Ein Klick auf einen Tag mit Terminen springt zu diesem Tag.
+// Welcher Monat gerade angezeigt wird (immer der 1. des Monats).
+let calendarMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+// Einen Monat vor (+1) oder zurück (-1) blättern. 0 = zurück zum heutigen Monat.
+function changeMonth(step) {
+  const today = new Date();
+  calendarMonth = step === 0
+    ? new Date(today.getFullYear(), today.getMonth(), 1)
+    : new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + step, 1);
+  loadCalendar();
+}
+
+// Springt in der Terminliste zu einem Tag.
+function scrollToDay(key) {
+  const group = document.getElementById(`day-${key}`);
+  if (group) group.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// Monatskalender: Kopf mit Pfeilen, darunter die Tage. Ein Klick auf einen Tag
+// mit Terminen springt in der Liste zu diesem Tag.
 function miniMonth(eventDays) {
   const today = new Date();
-  const first = new Date(today.getFullYear(), today.getMonth(), 1);
-  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+  const first = calendarMonth;
+  const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
   const offset = (first.getDay() + 6) % 7;            // Wochen beginnen am Montag
   const cellCount = Math.ceil((offset + daysInMonth) / 7) * 7;
 
@@ -442,7 +463,7 @@ function miniMonth(eventDays) {
     date.setDate(1 - offset + i);
     const key = dayKey(date);
     const classes = ["md"];
-    if (date.getMonth() !== today.getMonth()) classes.push("other");
+    if (date.getMonth() !== first.getMonth()) classes.push("other");
     if (key === dayKey(today)) classes.push("today");
     if (eventDays.has(key)) classes.push("has-event");
 
@@ -452,20 +473,36 @@ function miniMonth(eventDays) {
         class: classes.join(" "),
         text: String(date.getDate()),
         title: `Termine am ${date.toLocaleDateString("de-CH")}`,
-        onclick: () => document.getElementById(`day-${key}`).scrollIntoView({ behavior: "smooth", block: "start" }),
+        onclick: () => scrollToDay(key),
       }));
     } else {
       cells.push(el("span", { class: classes.join(" "), text: String(date.getDate()) }));
     }
   }
+
+  const isThisMonth = first.getFullYear() === today.getFullYear() && first.getMonth() === today.getMonth();
   return el("div", { class: "mini-month" },
-    el("div", { class: "mm-title", text: today.toLocaleDateString("de-CH", { month: "long", year: "numeric" }) }),
+    el("div", { class: "mm-head" },
+      el("span", { class: "mm-title", text: first.toLocaleDateString("de-CH", { month: "long", year: "numeric" }) }),
+      isThisMonth ? null : el("button", { type: "button", class: "mm-today", text: "Heute", onclick: () => changeMonth(0) }),
+      el("button", { type: "button", class: "icon-btn mm-nav", title: "Vorheriger Monat", "aria-label": "Vorheriger Monat", onclick: () => changeMonth(-1) }, icon("chevron_left")),
+      el("button", { type: "button", class: "icon-btn mm-nav", title: "Nächster Monat", "aria-label": "Nächster Monat", onclick: () => changeMonth(1) }, icon("chevron_right")),
+    ),
     el("div", { class: "mm-grid" }, ...cells),
+    el("div", { class: "mm-legend" },
+      el("span", { class: "lg google", text: "Kalender" }),
+      el("span", { class: "lg proposal", text: "Vorschlag aus Mail" }),
+    ),
   );
 }
 
-// Ein Termin: Uhrzeit (Beginn–Ende), Titel, Ort. Vergangene Termine sind blasser,
-// ein laufender Termin bekommt das Schild "Jetzt".
+// Ein Termin: Uhrzeit (Beginn–Ende), Titel, Ort.
+//   Termin aus einer Mail: Klick öffnet die Mail (dort lässt er sich bestätigen).
+//   Sonst: Klick öffnet den Termin in Google Kalender.
+//   Vorschlag = gestrichelt, verworfen = blass und durchgestrichen,
+//   vergangen = blasser, läuft gerade = Schild "Jetzt".
+const STATE_BADGE = { vorschlag: "Vorschlag", bestaetigt: "Aus Mail", verworfen: "Verworfen" };
+
 function calendarEntry(event) {
   const start = eventDate(event);
   const end = eventEnd(event);
@@ -476,13 +513,33 @@ function calendarEntry(event) {
   const classes = ["event-item"];
   if (event.all_day) classes.push("all-day");
   if (end && end < now) classes.push("past");
+  if (event.state === "vorschlag") classes.push("proposal");
+  if (event.state === "verworfen") classes.push("rejected");
 
+  const content = [
+    el("div", { class: "time" },
+      el("span", { text: time }),
+      running ? el("span", { class: "now", text: "Jetzt" }) : null,
+      STATE_BADGE[event.state] ? el("span", { class: "state", text: STATE_BADGE[event.state] }) : null,
+    ),
+    el("div", { class: "t", text: event.title }),
+    event.location ? el("div", { class: "s" }, icon("location_on"), el("span", { text: event.location })) : null,
+  ];
+
+  if (event.mail_id) {
+    return el("div", {
+      class: `${classes.join(" ")} clickable`,
+      role: "button",
+      tabindex: "0",
+      title: "Mail zu diesem Termin öffnen",
+      onclick: () => openMail(event.mail_id),
+      onkeydown: (e) => { if (e.key === "Enter") openMail(event.mail_id); },
+    }, ...content);
+  }
   const isLink = event.link && event.link.startsWith("https://");
   return el(isLink ? "a" : "div",
     { class: classes.join(" "), href: isLink ? event.link : null, target: isLink ? "_blank" : null, rel: isLink ? "noopener" : null },
-    el("div", { class: "time" }, el("span", { text: time }), running ? el("span", { class: "now", text: "Jetzt" }) : null),
-    el("div", { class: "t", text: event.title }),
-    event.location ? el("div", { class: "s" }, icon("location_on"), el("span", { text: event.location })) : null,
+    ...content,
   );
 }
 
@@ -490,10 +547,13 @@ async function loadCalendar() {
   const list = $("#calendar-list");
   list.replaceChildren(el("p", { class: "panel-sub", text: "Lädt…" }));
   try {
-    const data = await api("/api/calendar");
-    $("#calendar-sub").textContent = data.testmode
-      ? "Testmodus: nur im Test bestätigte Termine, der echte Kalender wird nicht gelesen."
-      : "Nächste 14 Tage aus deinem Google Kalender";
+    const month = `year=${calendarMonth.getFullYear()}&month=${calendarMonth.getMonth() + 1}`;
+    const data = await api(`/api/calendar?${month}`);
+    $("#calendar-sub").textContent = data.error
+      || (data.testmode
+        ? "Testmodus: Termine aus Testmails mit Label Termin. Der echte Kalender wird nicht gelesen."
+        : "Google Kalender und Termine aus Mails mit Label Termin");
+    $("#calendar-sub").classList.toggle("error", Boolean(data.error));
 
     // Termine nach Tag sortieren: { "2026-11-21": [termin, termin], ... }
     const byDay = new Map();
@@ -503,15 +563,20 @@ async function loadCalendar() {
       byDay.get(key).push(event);
     }
 
-    const nodes = [miniMonth(new Set(byDay.keys()))];
-    if (!data.events.length) nodes.push(el("p", { class: "panel-sub empty-cal", text: "Keine Termine." }));
-    for (const [key, events] of byDay) {
-      nodes.push(el("section", { class: "day-group", id: `day-${key}` },
+    $("#calendar-month").replaceChildren(miniMonth(new Set(byDay.keys())));
+    const groups = [...byDay].map(([key, events]) =>
+      el("section", { class: "day-group", id: `day-${key}` },
         dayHead(eventDate(events[0])),
         ...events.map(calendarEntry),
       ));
-    }
-    list.replaceChildren(...nodes);
+    list.replaceChildren(...(groups.length
+      ? groups
+      : [el("p", { class: "panel-sub empty-cal", text: "Keine Termine in diesem Monat." })]));
+
+    // Im aktuellen Monat gleich zu heute (oder zum nächsten Tag mit Terminen) springen.
+    const todayKey = dayKey(new Date());
+    const next = [...byDay.keys()].find((key) => key >= todayKey);
+    list.scrollTop = next ? document.getElementById(`day-${next}`).offsetTop - 8 : 0;
   } catch (error) {
     list.replaceChildren(el("p", { class: "panel-sub", text: error.message }));
   }
