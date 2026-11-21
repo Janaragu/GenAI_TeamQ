@@ -11,6 +11,12 @@ token.json
 *.db
 data/checkpoints/
 
+# Modellvergleich: echte Mails und Rohergebnisse bleiben lokal
+eval/modellvergleich/mails.json
+eval/modellvergleich/results/
+eval/modellvergleich/auswertung.json
+eval/modellvergleich/run.log
+
 # Python
 .venv/
 venv/

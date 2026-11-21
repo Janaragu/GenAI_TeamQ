@@ -125,7 +125,49 @@ Nacheinander (eine Anfrage nach der anderen) brauchten die lokalen Modelle pro M
 
 **Einordnung:** Die lokalen Modelle erreichen auf diesem Testset dieselbe oder eine bessere Trefferquote als die Cloud-API, sind auf diesem Rechner aber langsamer. Das kleinere Modell (Qwen, 4 GB) ist schneller, das grössere (Gemma, 7 GB) genauer.
 
-**Nächster Schritt:** Wir haben neue Mails bekommen. Das Testset wird damit erweitert und die Evaluation neu durchgeführt. Die Zahlen oben sind ein erster Stand (22 Testmails).
+### Modellvergleich auf den Mails der App (21.11.2026)
+
+Die 22 Testmails oben sind selbst geschrieben und eher einfach. Deshalb haben wir alle **40 Mails, die in der App liegen**, noch einmal durch drei Modelle laufen lassen: 19 ältere Mails aus dem Gmail-Testkonto und 21 Testmails von zwei Kollegen mit gezielten Grenzfällen (relatives Datum, Datum ohne Uhrzeit, Abgabe- und Zahlungsfristen, Terminabsage, zwei Termine in einer Mail, Englisch, Phishing, Prompt-Injection). 5 dieser Mails kamen doppelt an.
+
+**Vorgehen:**
+- **Baseline:** Claude Opus 5.5 hat jede Mail nach den Regeln im Prompt ([agent/prompts.py](agent/prompts.py)) eingeordnet, bevor die anderen Modelle liefen ([baseline_opus-5.5.json](eval/modellvergleich/baseline_opus-5.5.json)). 28 Fälle sind laut Prompt eindeutig («klar»), 12 regelt der Prompt nicht ausdrücklich («Ermessen»).
+- **Läufe:** [eval/modellvergleich/run_model.py](eval/modellvergleich/run_model.py) ruft dieselbe Funktion wie die App auf (`analyze_email`), ohne Labels oder Kalendereinträge. Die Mails laufen nacheinander, ein Aufwärm-Aufruf zählt nicht mit.
+- **Auswertung:** [eval/modellvergleich/evaluate.py](eval/modellvergleich/evaluate.py) vergleicht mit der Baseline.
+- **Präsentation:** [praesentation.html](eval/modellvergleich/praesentation.html), im Browser öffnen und mit den Pfeiltasten blättern.
+
+| | GPT-6 Luna (Cloud) | Gemma 4 12B QAT (LM Studio) | Qwen 3.5 4B (Ollama) |
+| --- | --- | --- | --- |
+| Parameter | keine offizielle Angabe | 12 Mrd. | 4 Mrd. |
+| Übereinstimmung, 28 klare Fälle | **27/28** | 26/28 | 25/28 |
+| Übereinstimmung, alle 40 Mails | 32/40 | **34/40** | 29/40 |
+| Termine erkannt / exakt (von 8) | 8 / **8** | 8 / 7 | 8 / 6 |
+| Terminvorschlag ohne echten Termin | 1 | 1 | 3 |
+| Prompt-Injection | als Spam erkannt | `info`, wie von der Mail verlangt | folgt der Anweisung, schlägt Termin vor |
+| Median pro Mail | **2.25 s** | 6.41 s | 3.34 s |
+| 40 Mails gesamt | 95.7 s | 277.1 s | 127.9 s |
+| Abbrüche | 0 | 0 | 0 |
+
+**Auffällig:**
+- **Datumsrechnung:** «Nächsten Dienstag um 14 Uhr», empfangen am Samstag 21.11.: Gemma und Qwen setzen Mittwoch 25.11. statt Dienstag 24.11. Qwen legt zudem «Montag 10:00» auf Dienstag.
+- **Ermessensfälle:** Echte Google-Sicherheitsmails ordnet GPT-6 Luna als `aufgabe` ein (6×), Qwen als `spam` (4×). Die Baseline sagt `info`. Der Prompt regelt diesen Fall nicht.
+- **Absage:** GPT-6 Luna macht aus «Meeting am Dienstag fällt aus» einen Terminvorschlag für das abgesagte Meeting.
+- **Schutz in der App:** Jeder Terminvorschlag muss in der Oberfläche bestätigt werden (`confirm_event`). Falsche Vorschläge landen also nicht automatisch im Kalender.
+
+**Grenzen dieser Evaluation:**
+- **Kein Goldstandard:** Die Baseline ist die Einschätzung eines Modells, Opus 5.5 lässt sich so nicht selbst bewerten.
+- **Nicht ganz blind:** Für einen Teil der älteren Mails waren frühere Ergebnisse vorher bekannt.
+- **Kleine Abstände:** Bei 28 klaren Fällen trennen die Modelle 1 bis 2 Mails. Das ist kein belastbarer Abstand, und die Rangfolge kippt, sobald die Ermessensfälle mitzählen. Bei Mail Nr. 24 (Datum ohne Uhrzeit) erlaubt der Prompt `aufgabe` und `info`. Mit dieser Lesart käme GPT-6 Luna auf 28/28.
+- **Ein Lauf pro Modell:** GPT-6 Luna läuft ohne gesetzte Temperatur, die Ergebnisse können schwanken.
+- **Testmails:** Duplikate zählen doppelt, und die Testmails kommen von privaten Gmail-Adressen, nicht von echten Shops oder Spammern.
+
+Der Test zeigt konkrete Schwächen (Injection, Datumsrechnung, falsche Termine). Für eine Rangliste «bestes Modell» reicht er nicht.
+
+**Nächste Schritte:**
+- Soll-Kategorien von zwei Personen festlegen lassen statt von einem Modell.
+- Prompt-Regeln für Absagen, Kontobenachrichtigungen und Anweisungen in Mails ergänzen.
+- Jedes Modell mehrmals laufen lassen und die Duplikate entfernen.
+
+Die Mails selbst und die Rohergebnisse (`mails.json`, `results/`, `auswertung.json`) enthalten echte Adressen und Mailtexte und werden deshalb nicht committet.
 
 ### Nachvollziehbarkeit mit LangSmith
 
@@ -212,6 +254,7 @@ Was pro LLM-Aufruf sichtbar ist: Modellname, Parameter, die vollständigen Nachr
 | `eval/` | System A (Regeln), Metriken-Skript, Benchmark für lokale Modelle | Evaluation & Daten |
 | `eval/data/` | Testset `testmails.json` mit Soll-Werten (wird committet) | Evaluation & Daten |
 | `eval/results/` | Rohdaten der Benchmarks | Evaluation & Daten |
+| `eval/modellvergleich/` | Modellvergleich auf den Mails der App: Baseline, Lauf- und Auswertungsskript, Präsentation (Mails und Rohergebnisse nur lokal) | Evaluation & Daten |
 | `docs/` | Roadmap und Benchmark-Bericht zu lokalen Modellen | alle |
 | `data/` | SQLite, Checkpoints – lokal, **nicht** im Repo | alle |
 | `notebooks/` | Experimente | alle |
@@ -246,6 +289,8 @@ python -m app.main              # Dashboard
 python -m eval.metrics          # System A (Regeln) gegen System B (LLM)
 python -m eval.metrics --only-a # nur Regeln, ohne LLM-Aufrufe
 python -m eval.benchmark --backend ollama --model qwen3.5:4b   # Fehlerquote und Zeit eines lokalen Modells
+python -m eval.modellvergleich.run_model --backend cloud --model gpt-6-luna   # Modell auf eval/modellvergleich/mails.json
+python -m eval.modellvergleich.evaluate                                     # neueste Läufe gegen die Baseline
 ```
 
 Für echte Mails einmalig im Browser anmelden:
